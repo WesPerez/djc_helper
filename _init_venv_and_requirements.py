@@ -3,6 +3,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import sys
 
 from log import color, logger
 from util import bypass_proxy, show_head_line
@@ -28,7 +29,7 @@ def init_venv_and_requirements(
 
     subprocess.call(
         [
-            "python",
+            sys.executable,
             "-m",
             "venv",
             venv_path,

@@ -18,10 +18,10 @@ IF ERRORLEVEL 1 (
 ECHO.
 IF NOT EXIST .venv\Scripts\python.exe (
   ECHO Initializing venv
-  python _init_venv_and_requirements.py
+  py -3.8 _init_venv_and_requirements.py
 ) ELSE IF "%updated%"=="1" (
   ECHO Source changed, checking dependencies
-  python _init_venv_and_requirements.py
+  py -3.8 _init_venv_and_requirements.py
 ) ELSE (
   ECHO venv exists, skipping dependency install
 )
