@@ -2,11 +2,6 @@ name: Lint And Test
 
 on:
   workflow_dispatch:
-  push:
-  release:
-    types: [ published ]
-  pull_request:
-    types: [ opened, synchronize ]
 
 jobs:
   lint:
