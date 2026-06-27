@@ -1,23 +1,33 @@
 @ECHO OFF
+CHCP 65001 >NUL
 
-:: 修改console默认encoding为utf8，避免中文乱码
-CHCP 65001
-
-set venv_path=".venv"
-set pyscript_path="%venv_path%\Scripts"
-set py_path="%pyscript_path%\python"
-set pip_path="%pyscript_path%\pip"
-set pyinstaller_path="%pyscript_path%\pyinstaller"
-
-:: 更新代码
-ECHO.
-ECHO 更新源代码
-git pull origin master --tags
+set updated=0
 
 ECHO.
-ECHO 尝试初始化venv
-python _init_venv_and_requirements.py
+ECHO Checking source updates
+git fetch origin master --tags
+git merge-base --is-ancestor origin/master HEAD
+IF ERRORLEVEL 1 (
+  ECHO Update found, pulling source
+  git pull --ff-only origin master --tags
+  set updated=1
+) ELSE (
+  ECHO Source is already up to date
+)
 
 ECHO.
-ECHO 从venv启动小助手
+IF NOT EXIST .venv\Scripts\python.exe (
+  ECHO Initializing venv
+  python _init_venv_and_requirements.py
+) ELSE IF "%updated%"=="1" (
+  ECHO Source changed, checking dependencies
+  python _init_venv_and_requirements.py
+) ELSE (
+  ECHO venv exists, skipping dependency install
+)
+
+ECHO.
+ECHO Starting helper from venv
+set NO_PROXY=*
+set no_proxy=*
 .venv\Scripts\python main.py
