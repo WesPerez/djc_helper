@@ -5059,8 +5059,12 @@ class DjcHelper:
                 if will_act_expired_in(act_config.dtEndTime, datetime.timedelta(days=5)):
                     # 活动即将过期时，若仍有未兑换的奖励，则尝试提示下
                     async_message_box(
-                        "井盖杯强者之路小助手仅会尝试领取红10增幅券（600积分），活动还有几天即将结束，如果还有积分剩余，请自行前往【积分获取与兑换】页面使用（最后一天将额外尝试兑换为黑钻15天（100积分））\n",
-                        f"26.6 井盖杯强者之路奖励兑换提示_{self.cfg.name}",
+                        (
+                            "井盖杯强者之路小助手仅会尝试领取红10增幅券（600积分），活动还有几天即将结束，如果还有积分剩余，请自行前往【积分获取与兑换】页面使用（最后一天将额外尝试兑换为黑钻15天（100积分））\n"
+                            "\n"
+                            f"结束日期为 {act_config.dtEndTime}"
+                        ),
+                        "26.6 井盖杯强者之路奖励兑换提示",
                         open_url=get_act_url("井盖杯强者之路"),
                         show_once_daily=True,
                     )
@@ -7679,7 +7683,11 @@ class DjcHelper:
         act_config = get_not_ams_act("WeGame活动")
         if will_act_expired_in(act_config.dtEndTime, datetime.timedelta(days=5)):
             async_message_box(
-                "wegame活动即将结束，请在点击确认后弹出的活动页面中自行在最下方兑换剩余的积分（小助手只会尝试帮你领取 红10券）",
+                (
+                    "wegame活动即将结束，请在点击确认后弹出的活动页面中自行在最下方兑换剩余的积分（小助手只会尝试帮你领取 红10券）\n"
+                    "\n"
+                    f"结束日期为 {act_config.dtEndTime}"
+                ),
                 "WeGame活动积分兑换提示-26.6",
                 show_once_daily=True,
                 open_url=get_act_url("WeGame活动"),
@@ -11767,6 +11775,6 @@ if __name__ == "__main__":
         djcHelper.get_bind_role_list()
 
         # djcHelper.dnf_kol()
-        djcHelper.dnf_helper_limit_act_3()
+        djcHelper.dnf_jinggai_stronger()
 
     pause()
