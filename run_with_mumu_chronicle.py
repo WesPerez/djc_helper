@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DNF_HELPER_PACKAGE = "com.tencent.gamehelper.dnf"
 DNF_HELPER_MAIN_ACTIVITY = "com.tencent.gamehelper.ui.main.MainActivity"
+DNF_HELPER_WELCOME_ACTIVITY = "com.tencent.gamehelper.ui.main.WelcomeActivity"
 DNF_HELPER_TOPIC_ACTIVITY = "com.tencent.gamehelper.ui.moment.TopicMomentActivity"
 SCREENSHOT_REMOTE_PATH = "/sdcard/djc_helper_chronicle_state.png"
 SCREENSHOT_LOCAL_PATH = ROOT / ".cached" / "mumu_chronicle_state.png"
@@ -243,14 +244,19 @@ def scaler(width, height):
 
 
 def reset_to_home(cli, vmindex):
-    launch_dnf_helper(cli, vmindex)
-    back(cli, vmindex, count=3, delay=1.2)
-    launch_dnf_helper(cli, vmindex)
+    open_dnf_home_fresh(cli, vmindex)
 
 
 def open_dnf_home_fresh(cli, vmindex):
     force_stop_app(cli, vmindex, DNF_HELPER_PACKAGE)
-    launch_dnf_helper(cli, vmindex)
+    adb_shell(
+        cli,
+        vmindex,
+        f"am start -S -n {DNF_HELPER_PACKAGE}/{DNF_HELPER_WELCOME_ACTIVITY}",
+        timeout=30,
+        check=False,
+    )
+    time.sleep(8)
 
 
 def tap_dnf_home_tab(cli, vmindex, width, height):
@@ -385,10 +391,111 @@ def classify_task_button(cli, vmindex, width, height, y_fraction):
     return "unknown"
 
 
+def find_visible_claim_buttons(cli, vmindex):
+    try:
+        image_path = capture_screen(cli, vmindex)
+        image_width, image_height, channels, rows = read_png_rgb(image_path)
+    except Exception as exc:
+        log(f"截图扫描领取按钮失败：{exc}")
+        return []
+
+    x1 = int(image_width * 0.48)
+    x2 = int(image_width * 0.72)
+    y1 = int(image_height * 0.34)
+    y2 = int(image_height * 0.91)
+    red_rows = []
+
+    for y in range(y1, y2):
+        red_pixels = 0
+        for x in range(x1, x2):
+            idx = x * channels
+            r, g, b = rows[y][idx], rows[y][idx + 1], rows[y][idx + 2]
+            if r > 190 and g < 115 and b < 135:
+                red_pixels += 1
+
+        if red_pixels >= max(6, int((x2 - x1) * 0.035)):
+            red_rows.append(y)
+
+    segments = []
+    start = last = None
+    for y in red_rows:
+        if start is None:
+            start = last = y
+        elif y - last <= 3:
+            last = y
+        else:
+            segments.append((start, last))
+            start = last = y
+
+    if start is not None:
+        segments.append((start, last))
+
+    button_y_values = []
+    for start, end in segments:
+        height = end - start + 1
+        center_y = (start + end) / 2
+
+        # A claim button has red text and/or red rounded border in this right-side region.
+        # Ignore tiny decorative red marks and near-bottom floating controls.
+        if height < 8 or center_y > image_height * 0.90:
+            continue
+
+        y_fraction = center_y / image_height
+        if all(abs(y_fraction - existing) > 0.035 for existing in button_y_values):
+            button_y_values.append(y_fraction)
+
+    return sorted(button_y_values)
+
+
+def claim_all_visible_chronicle_rewards(cli, vmindex, width, height, max_claims=20):
+    claimed = 0
+    attempted_positions = set()
+
+    for _ in range(max_claims):
+        claim_buttons = find_visible_claim_buttons(cli, vmindex)
+        if not claim_buttons:
+            break
+
+        y_fraction = claim_buttons[0]
+        position_key = round(y_fraction, 3)
+        if position_key in attempted_positions:
+            log(f"当前页同一位置 y={y_fraction:.3f} 仍被识别为可领取，停止当前页扫描以避免重复误点")
+            break
+
+        attempted_positions.add(position_key)
+        log(f"领取当前页可见奖励：y={y_fraction:.3f}")
+        tap_fraction(cli, vmindex, width, height, 0.648, y_fraction)
+        finish_claim_dialogs(cli, vmindex, width, height)
+        claimed += 1
+
+    return claimed
+
+
+def claim_all_chronicle_rewards(cli, vmindex, width, height, max_pages=6):
+    log("开始扫描并领取编年史任务页全部可见奖励")
+    total_claimed = 0
+
+    if classify_task_button(cli, vmindex, width, height, 0.074) == "claim":
+        claim_visible_chronicle_task(cli, vmindex, width, height, "DNF助手签到", 0.074)
+        total_claimed += 1
+
+    for page in range(max_pages):
+        total_claimed += claim_all_visible_chronicle_rewards(cli, vmindex, width, height)
+
+        if page == max_pages - 1:
+            break
+
+        swipe_fraction(cli, vmindex, width, height, 0.5, 0.86, 0.5, 0.50, 500)
+        time.sleep(1.5)
+
+    log(f"编年史任务页奖励扫描完成，本次领取 {total_claimed} 个")
+    return total_claimed
+
+
 def open_chronicle_task_list(cli, vmindex, width, height, launch_first=True):
     log("打开 DNF助手编年史任务页")
     if launch_first:
-        launch_dnf_helper(cli, vmindex)
+        open_dnf_home_fresh(cli, vmindex)
     tap_dnf_home_tab(cli, vmindex, width, height)
 
     # 首页顶部快捷入口“编年有礼”
@@ -403,9 +510,18 @@ def open_chronicle_task_list(cli, vmindex, width, height, launch_first=True):
 def claim_visible_chronicle_task(cli, vmindex, width, height, task_name, y_fraction):
     log(f"领取/确认任务奖励：{task_name}")
     tap_fraction(cli, vmindex, width, height, 0.648, y_fraction)
-    time.sleep(2)
+    finish_claim_dialogs(cli, vmindex, width, height)
 
-    # 如果出现“获得奖励”弹窗，这里点“知道了”；没有弹窗时这个点位通常为空白区域。
+
+def finish_claim_dialogs(cli, vmindex, width, height):
+    time.sleep(1.5)
+
+    # DNF助手签到会先弹“奖励确认领取”，右侧红色按钮是“确认”。
+    # 普通任务可能直接弹“获得奖励”，这里先尝试确认，再尝试关闭成功弹窗。
+    tap_fraction(cli, vmindex, width, height, 0.668, 0.584)
+    time.sleep(1.5)
+
+    # 如果出现“获得奖励”弹窗，这里点“知道了”；没有弹窗时通常不会产生副作用。
     tap_fraction(cli, vmindex, width, height, 0.5, 0.595)
     time.sleep(1.5)
 
@@ -506,8 +622,11 @@ def run_chronicle_app_tasks(cli, vmindex, include_weekly_topic=False):
 
     if include_weekly_topic:
         enter_weekly_topic(cli, vmindex, width, height)
+        open_chronicle_task_list(cli, vmindex, width, height)
     else:
         log("跳过：每周浏览话题详细页。如需执行，可添加 --include-weekly-topic")
+
+    claim_all_chronicle_rewards(cli, vmindex, width, height)
 
     log("DNF助手 App 行为任务已执行完毕")
 
