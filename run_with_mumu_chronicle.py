@@ -1,10 +1,12 @@
 import argparse
+import struct
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+import zlib
 from pathlib import Path
 
 
@@ -12,6 +14,8 @@ ROOT = Path(__file__).resolve().parent
 DNF_HELPER_PACKAGE = "com.tencent.gamehelper.dnf"
 DNF_HELPER_MAIN_ACTIVITY = "com.tencent.gamehelper.ui.main.MainActivity"
 DNF_HELPER_TOPIC_ACTIVITY = "com.tencent.gamehelper.ui.moment.TopicMomentActivity"
+SCREENSHOT_REMOTE_PATH = "/sdcard/djc_helper_chronicle_state.png"
+SCREENSHOT_LOCAL_PATH = ROOT / ".cached" / "mumu_chronicle_state.png"
 
 
 def log(message):
@@ -107,6 +111,10 @@ def adb_shell(cli, vmindex, command, timeout=60, check=True):
     return adb(cli, vmindex, f"shell {command}", timeout=timeout, check=check)
 
 
+def adb_pull(cli, vmindex, remote_path, local_path, timeout=60, check=True):
+    return adb(cli, vmindex, f"pull {remote_path} {local_path}", timeout=timeout, check=check)
+
+
 def app_info(cli, vmindex, package_name):
     return mumu(
         cli,
@@ -198,7 +206,7 @@ def launch_dnf_helper(cli, vmindex):
         timeout=30,
         check=False,
     )
-    time.sleep(8)
+    time.sleep(5)
 
 
 def run_am_start(cli, vmindex, component, extras):
@@ -240,14 +248,148 @@ def reset_to_home(cli, vmindex):
     launch_dnf_helper(cli, vmindex)
 
 
-def open_dnf_home(cli, vmindex):
+def open_dnf_home_fresh(cli, vmindex):
     force_stop_app(cli, vmindex, DNF_HELPER_PACKAGE)
     launch_dnf_helper(cli, vmindex)
 
 
-def open_chronicle_task_list(cli, vmindex, width, height):
+def tap_dnf_home_tab(cli, vmindex, width, height):
+    tap_fraction(cli, vmindex, width, height, 0.127, 0.971)
+    time.sleep(1.5)
+
+
+def capture_screen(cli, vmindex):
+    SCREENSHOT_LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    adb_shell(cli, vmindex, f"screencap -p {SCREENSHOT_REMOTE_PATH}", timeout=20, check=False)
+    adb_pull(cli, vmindex, SCREENSHOT_REMOTE_PATH, SCREENSHOT_LOCAL_PATH, timeout=20, check=False)
+    return SCREENSHOT_LOCAL_PATH
+
+
+def read_png_rgb(path):
+    data = Path(path).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError(f"{path} 不是 PNG 文件")
+
+    pos = 8
+    width = height = bit_depth = color_type = None
+    compressed = bytearray()
+
+    while pos < len(data):
+        length = struct.unpack(">I", data[pos : pos + 4])[0]
+        chunk_type = data[pos + 4 : pos + 8]
+        chunk_data = data[pos + 8 : pos + 8 + length]
+        pos += 12 + length
+
+        if chunk_type == b"IHDR":
+            width, height, bit_depth, color_type, _, _, interlace = struct.unpack(">IIBBBBB", chunk_data)
+            if bit_depth != 8 or interlace != 0 or color_type not in (2, 6):
+                raise ValueError(f"不支持的 PNG 格式：bit_depth={bit_depth}, color_type={color_type}, interlace={interlace}")
+        elif chunk_type == b"IDAT":
+            compressed.extend(chunk_data)
+        elif chunk_type == b"IEND":
+            break
+
+    if width is None or height is None:
+        raise ValueError(f"{path} 缺少 IHDR")
+
+    channels = 4 if color_type == 6 else 3
+    row_size = width * channels
+    raw = zlib.decompress(bytes(compressed))
+    rows = []
+    previous = bytearray(row_size)
+    offset = 0
+
+    for _ in range(height):
+        filter_type = raw[offset]
+        offset += 1
+        row = bytearray(raw[offset : offset + row_size])
+        offset += row_size
+
+        for i in range(row_size):
+            left = row[i - channels] if i >= channels else 0
+            up = previous[i]
+            up_left = previous[i - channels] if i >= channels else 0
+
+            if filter_type == 1:
+                row[i] = (row[i] + left) & 0xFF
+            elif filter_type == 2:
+                row[i] = (row[i] + up) & 0xFF
+            elif filter_type == 3:
+                row[i] = (row[i] + ((left + up) // 2)) & 0xFF
+            elif filter_type == 4:
+                predictor = paeth_predictor(left, up, up_left)
+                row[i] = (row[i] + predictor) & 0xFF
+            elif filter_type != 0:
+                raise ValueError(f"不支持的 PNG filter：{filter_type}")
+
+        rows.append(row)
+        previous = row
+
+    return width, height, channels, rows
+
+
+def paeth_predictor(left, up, up_left):
+    estimate = left + up - up_left
+    left_distance = abs(estimate - left)
+    up_distance = abs(estimate - up)
+    up_left_distance = abs(estimate - up_left)
+
+    if left_distance <= up_distance and left_distance <= up_left_distance:
+        return left
+    if up_distance <= up_left_distance:
+        return up
+    return up_left
+
+
+def classify_task_button(cli, vmindex, width, height, y_fraction):
+    try:
+        image_path = capture_screen(cli, vmindex)
+        image_width, image_height, channels, rows = read_png_rgb(image_path)
+    except Exception as exc:
+        log(f"截图识别任务按钮失败，将按未知状态处理：{exc}")
+        return "unknown"
+
+    x1 = int(image_width * 0.57)
+    x2 = int(image_width * 0.72)
+    y1 = int(image_height * (y_fraction - 0.032))
+    y2 = int(image_height * (y_fraction + 0.032))
+    total = black = red = gray = 0
+
+    for y in range(max(0, y1), min(image_height, y2)):
+        row = rows[y]
+        for x in range(max(0, x1), min(image_width, x2)):
+            idx = x * channels
+            r, g, b = row[idx], row[idx + 1], row[idx + 2]
+            total += 1
+
+            if r < 55 and g < 55 and b < 55:
+                black += 1
+            elif r > 190 and g < 105 and b < 125:
+                red += 1
+            elif 105 <= r <= 185 and 105 <= g <= 185 and 105 <= b <= 185 and max(r, g, b) - min(r, g, b) < 24:
+                gray += 1
+
+    if total == 0:
+        return "unknown"
+
+    black_ratio = black / total
+    red_ratio = red / total
+    gray_ratio = gray / total
+
+    if black_ratio > 0.09:
+        return "todo"
+    if red_ratio > 0.015:
+        return "claim"
+    if gray_ratio > 0.015:
+        return "done"
+    return "unknown"
+
+
+def open_chronicle_task_list(cli, vmindex, width, height, launch_first=True):
     log("打开 DNF助手编年史任务页")
-    open_dnf_home(cli, vmindex)
+    if launch_first:
+        launch_dnf_helper(cli, vmindex)
+    tap_dnf_home_tab(cli, vmindex, width, height)
 
     # 首页顶部快捷入口“编年有礼”
     tap_fraction(cli, vmindex, width, height, 0.133, 0.128)
@@ -268,9 +410,47 @@ def claim_visible_chronicle_task(cli, vmindex, width, height, task_name, y_fract
     time.sleep(1.5)
 
 
+def ensure_task_ready(cli, vmindex, width, height, task_name, y_fraction):
+    state = classify_task_button(cli, vmindex, width, height, y_fraction)
+
+    if state == "done":
+        log(f"跳过：{task_name} 已领取")
+        return False
+
+    if state == "claim":
+        claim_visible_chronicle_task(cli, vmindex, width, height, task_name, y_fraction)
+        return False
+
+    if state == "todo":
+        return True
+
+    log(f"未能识别 {task_name} 的按钮状态，为避免误点，跳过该任务")
+    return False
+
+
+def return_to_chronicle_from_content_feed(cli, vmindex, width, height):
+    back(cli, vmindex, count=1, delay=1.5)
+    tap_dnf_home_tab(cli, vmindex, width, height)
+    tap_fraction(cli, vmindex, width, height, 0.133, 0.128)
+    time.sleep(6)
+    swipe_fraction(cli, vmindex, width, height, 0.5, 0.906, 0.5, 0.375, 700)
+    time.sleep(2)
+
+
+def return_to_chronicle_from_circle_page(cli, vmindex, width, height):
+    back(cli, vmindex, count=1, delay=1.5)
+    tap_dnf_home_tab(cli, vmindex, width, height)
+    tap_fraction(cli, vmindex, width, height, 0.133, 0.128)
+    time.sleep(6)
+    swipe_fraction(cli, vmindex, width, height, 0.5, 0.906, 0.5, 0.375, 700)
+    time.sleep(2)
+
+
 def browse_one_content(cli, vmindex, width, height):
+    if not ensure_task_ready(cli, vmindex, width, height, "浏览1篇内容", 0.666):
+        return
+
     log("执行：浏览1篇内容")
-    open_chronicle_task_list(cli, vmindex, width, height)
 
     # 必须从编年史任务卡片的“去完成”进入，再点开一篇内容详情，才会计入任务。
     tap_fraction(cli, vmindex, width, height, 0.648, 0.666)
@@ -281,22 +461,29 @@ def browse_one_content(cli, vmindex, width, height):
     swipe_fraction(cli, vmindex, width, height, 0.5, 0.875, 0.5, 0.52, 600)
     time.sleep(5)
 
-    open_chronicle_task_list(cli, vmindex, width, height)
-    claim_visible_chronicle_task(cli, vmindex, width, height, "浏览1篇内容", 0.666)
+    return_to_chronicle_from_content_feed(cli, vmindex, width, height)
+    if classify_task_button(cli, vmindex, width, height, 0.666) == "claim":
+        claim_visible_chronicle_task(cli, vmindex, width, height, "浏览1篇内容", 0.666)
+    else:
+        log("浏览1篇内容未出现可领取按钮，可能已领取或助手未及时刷新")
 
 
 def enter_circle_detail(cli, vmindex, width, height):
-    log("执行：进入圈子详细页")
-    open_chronicle_task_list(cli, vmindex, width, height)
+    if not ensure_task_ready(cli, vmindex, width, height, "进入圈子详细页", 0.779):
+        return
 
+    log("执行：进入圈子详细页")
     # “去完成”先进入发现/圈子聚合页，再点进一个话题详情才会计入任务。
     tap_fraction(cli, vmindex, width, height, 0.648, 0.779)
     time.sleep(6)
     tap_fraction(cli, vmindex, width, height, 0.278, 0.603)
     time.sleep(10)
 
-    open_chronicle_task_list(cli, vmindex, width, height)
-    claim_visible_chronicle_task(cli, vmindex, width, height, "进入圈子详细页", 0.779)
+    return_to_chronicle_from_circle_page(cli, vmindex, width, height)
+    if classify_task_button(cli, vmindex, width, height, 0.779) == "claim":
+        claim_visible_chronicle_task(cli, vmindex, width, height, "进入圈子详细页", 0.779)
+    else:
+        log("进入圈子详细页未出现可领取按钮，可能已领取或助手未及时刷新")
 
 
 def enter_weekly_topic(cli, vmindex, width, height):
@@ -309,12 +496,18 @@ def enter_weekly_topic(cli, vmindex, width, height):
     back(cli, vmindex, count=2, delay=1.5)
 
 
-def run_chronicle_app_tasks(cli, vmindex):
+def run_chronicle_app_tasks(cli, vmindex, include_weekly_topic=False):
     width, height = query_screen_size(cli, vmindex)
 
+    open_dnf_home_fresh(cli, vmindex)
+    open_chronicle_task_list(cli, vmindex, width, height, launch_first=False)
     browse_one_content(cli, vmindex, width, height)
     enter_circle_detail(cli, vmindex, width, height)
-    enter_weekly_topic(cli, vmindex, width, height)
+
+    if include_weekly_topic:
+        enter_weekly_topic(cli, vmindex, width, height)
+    else:
+        log("跳过：每周浏览话题详细页。如需执行，可添加 --include-weekly-topic")
 
     log("DNF助手 App 行为任务已执行完毕")
 
@@ -346,6 +539,7 @@ def parse_args():
     parser.add_argument("--startup-timeout", type=int, default=180, help="Seconds to wait for Android startup")
     parser.add_argument("--skip-app-tasks", action="store_true", help="Only run djc_helper")
     parser.add_argument("--skip-djc-helper", action="store_true", help="Only run MuMu/DNF Assistant app tasks")
+    parser.add_argument("--include-weekly-topic", action="store_true", help="Also run the weekly topic detail task")
     return parser.parse_args()
 
 
@@ -357,7 +551,7 @@ def main():
         log(f"使用 MuMu CLI：{cli}")
         ensure_mumu_started(cli, args.vmindex, args.startup_timeout)
         require_dnf_helper_installed(cli, args.vmindex)
-        run_chronicle_app_tasks(cli, args.vmindex)
+        run_chronicle_app_tasks(cli, args.vmindex, args.include_weekly_topic)
     else:
         log("跳过 MuMu/DNF助手 App 行为任务")
 
