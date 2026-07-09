@@ -27,7 +27,11 @@ IF NOT EXIST .venv\Scripts\python.exe (
 )
 
 ECHO.
-ECHO Starting helper from venv
+ECHO Starting MuMu chronicle tasks and helper from venv
 set NO_PROXY=*
 set no_proxy=*
-.venv\Scripts\python main.py
+IF "%SKIP_MUMU_CHRONICLE%"=="1" (
+  .venv\Scripts\python main.py
+) ELSE (
+  .venv\Scripts\python run_with_mumu_chronicle.py
+)
