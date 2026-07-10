@@ -687,20 +687,9 @@ class DjcHelper:
         return [
             ("DNF助手编年史", self.dnf_helper_chronicle),
             ("绑定手机活动", self.dnf_bind_phone),
-            ("助手限定活动", self.dnf_helper_limit_act),  # 魔界人每日幸运签
-            ("DNF格斗大赛", self.dnf_pk),
-            ("像素拼图", self.dnf_pixel_puzzle),
-            ("周年特别节目", self.dnf_anniversary_special_act),
-            ("DNF周年庆登录活动", self.dnf_anniversary),
-            ("DNF落地页活动_ide", self.dnf_luodiye_ide),
             ("回流引导秘籍", self.dnf_recall_guide),
             ("DNF心悦wpe", self.dnf_xinyue_wpe),
-            ("WeGame活动", self.dnf_wegame),
-            ("colg其他活动", self.colg_other_act),
-            ("kol勇士召回", self.dnf_kol_recall),
-            ("助手限定活动_2", self.dnf_helper_limit_act_2), # 海滩派对
-            ("井盖杯强者之路", self.dnf_jinggai_stronger),
-            ("助手限定活动_3", self.dnf_helper_limit_act_3), # 夏日破浪补给站
+            ("夏日礼包", self.dnf_summer_gift_act),
         ]
 
     def expired_activities(self) -> list[tuple[str, Callable]]:
@@ -708,6 +697,18 @@ class DjcHelper:
         # hack: 已经过期非常久且很久未再出的的活动相关信息已挪到 djc_helper_tomb.py ，需要时可前往查看
         # undone: 当这个列表下方过期很久的活动变得很多的时候，就再将部分挪到上面这个墓地中
         return [
+            ("助手限定活动_3", self.dnf_helper_limit_act_3), # 夏日破浪补给站
+            ("井盖杯强者之路", self.dnf_jinggai_stronger),
+            ("助手限定活动_2", self.dnf_helper_limit_act_2), # 海滩派对
+            ("kol勇士召回", self.dnf_kol_recall),
+            ("colg其他活动", self.colg_other_act),
+            ("WeGame活动", self.dnf_wegame),
+            ("DNF落地页活动_ide", self.dnf_luodiye_ide),
+            ("DNF周年庆登录活动", self.dnf_anniversary),
+            ("周年特别节目", self.dnf_anniversary_special_act),
+            ("像素拼图", self.dnf_pixel_puzzle),
+            ("DNF格斗大赛", self.dnf_pk),
+            ("助手限定活动", self.dnf_helper_limit_act),  # 魔界人每日幸运签
             ("DNF闪光杯", self.dnf_flash_cap),
             ("DNF预约", self.dnf_reservation),
             ("colg每日签到", self.colg_signin),
@@ -10844,6 +10845,65 @@ class DjcHelper:
             **extra_params,
         )
 
+    # --------------------------------------------夏日礼包--------------------------------------------
+    @try_except()
+    def dnf_summer_gift_act(self):
+        show_head_line("夏日礼包")
+        self.show_not_ams_act_info("夏日礼包")
+
+        if not self.cfg.function_switches.get_dnf_summer_gift_act or self.disable_most_activities():
+            show_act_not_enable_warning("夏日礼包")
+            return
+
+        self.check_dnf_summer_gift_act()
+
+        for currentQuestionIndex in range(6):
+            self.dnf_summer_gift_act_op(f"记录互动状态 - {currentQuestionIndex}", "574334", sPass=currentQuestionIndex)
+            time.sleep(1)
+
+            self.dnf_summer_gift_act_op(f"领取奖励 - {currentQuestionIndex}", "574335", index=currentQuestionIndex)
+
+            time.sleep(5)
+
+        # self.dnf_summer_gift_act_op("门票抽奖", "574344")
+
+        self.dnf_summer_gift_act_op("分享奖励", "576694")
+
+        async_message_box(
+            "夏日礼包活动右上角第一个按钮可以概率抽长隆水上乐园门票，可以自己去戳一下，中奖后需要在页面填写手机号等信息来领取奖品",
+            "夏日礼包抽奖",
+            open_url=get_act_url("夏日礼包"),
+            show_once=True,
+        )
+
+    def check_dnf_summer_gift_act(self, **extra_params):
+        return self.ide_check_bind_account(
+            "夏日礼包",
+            get_act_url("夏日礼包"),
+            activity_op_func=self.dnf_summer_gift_act_op,
+            sAuthInfo="",
+            sActivityInfo="",
+        )
+
+    def dnf_summer_gift_act_op(
+        self,
+        ctx: str,
+        iFlowId: str,
+        print_res=True,
+        **extra_params,
+    ):
+        iActivityId = self.urls.ide_iActivityId_dnf_summer_gift_act
+
+        return self.ide_request(
+            ctx,
+            "comm.ams.game.qq.com",
+            iActivityId,
+            iFlowId,
+            print_res,
+            get_act_url("夏日礼包"),
+            **extra_params,
+        )
+
     # --------------------------------------------辅助函数--------------------------------------------
     def get(
         self,
@@ -11775,6 +11835,6 @@ if __name__ == "__main__":
         djcHelper.get_bind_role_list()
 
         # djcHelper.dnf_kol()
-        djcHelper.dnf_jinggai_stronger()
+        djcHelper.dnf_helper_limit_act_3()
 
     pause()
