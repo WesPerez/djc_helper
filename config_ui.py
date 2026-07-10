@@ -3081,6 +3081,7 @@ class FunctionSwitchesConfigUi(QWidget):
             ("助手限定活动_2", "get_dnf_helper_limit_act_2"),
             ("井盖杯强者之路", "get_dnf_jinggai_stronger"),
             ("助手限定活动_3", "get_dnf_helper_limit_act_3"),
+            ("夏日礼包", "get_dnf_summer_gift_act"),
         ],
         "QQ空间pskey": [
             ("集卡", "get_ark_lottery"),
