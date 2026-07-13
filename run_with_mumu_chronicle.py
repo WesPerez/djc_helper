@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 import zlib
 from pathlib import Path
 
@@ -17,6 +18,9 @@ DNF_HELPER_WELCOME_ACTIVITY = "com.tencent.gamehelper.ui.main.WelcomeActivity"
 DNF_HELPER_TOPIC_ACTIVITY = "com.tencent.gamehelper.ui.moment.TopicMomentActivity"
 SCREENSHOT_REMOTE_PATH = "/sdcard/djc_helper_chronicle_state.png"
 SCREENSHOT_LOCAL_PATH = ROOT / ".cached" / "mumu_chronicle_state.png"
+UI_DUMP_REMOTE_PATH = "/sdcard/djc_helper_window.xml"
+UI_DUMP_LOCAL_PATH = ROOT / ".cached" / "djc_helper_window.xml"
+TASK_ACTION_TEXTS = ("去完成", "领取", "已领取", "已全部领取")
 
 
 def log(message):
@@ -47,6 +51,7 @@ def find_mumu_cli(explicit_path=None):
 
     candidates.extend(
         [
+            Path(r"D:\Program Files\Netease\MuMuPlayer\nx_main\mumu-cli.exe"),
             Path(r"D:\Program Files\Netease\MuMu\nx_main\mumu-cli.exe"),
             Path(r"C:\Program Files\Netease\MuMu\nx_main\mumu-cli.exe"),
             Path(os.environ.get("LOCALAPPDATA", "")) / "MuMu模拟器" / "nx_main" / "mumu-cli.exe",
@@ -269,6 +274,132 @@ def capture_screen(cli, vmindex):
     adb_shell(cli, vmindex, f"screencap -p {SCREENSHOT_REMOTE_PATH}", timeout=20, check=False)
     adb_pull(cli, vmindex, SCREENSHOT_REMOTE_PATH, SCREENSHOT_LOCAL_PATH, timeout=20, check=False)
     return SCREENSHOT_LOCAL_PATH
+
+
+def dump_ui(cli, vmindex, attempts=3):
+    UI_DUMP_LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    for attempt in range(1, attempts + 1):
+        UI_DUMP_LOCAL_PATH.unlink(missing_ok=True)
+        output = adb_shell(
+            cli,
+            vmindex,
+            f"uiautomator dump --compressed {UI_DUMP_REMOTE_PATH}",
+            timeout=30,
+            check=False,
+        )
+        if "dumped to" in output:
+            adb_pull(cli, vmindex, UI_DUMP_REMOTE_PATH, UI_DUMP_LOCAL_PATH, timeout=20, check=False)
+
+        if UI_DUMP_LOCAL_PATH.exists():
+            try:
+                return ET.parse(UI_DUMP_LOCAL_PATH).getroot()
+            except ET.ParseError as exc:
+                log(f"第 {attempt} 次解析 DNF助手页面结构失败：{exc}")
+        else:
+            log(f"第 {attempt} 次读取 DNF助手页面结构失败：{output.strip()}")
+
+        time.sleep(1.5)
+
+    raise RuntimeError("无法读取 DNF助手页面结构")
+
+
+def parse_bounds(value):
+    match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", value or "")
+    if not match:
+        return None
+    left, top, right, bottom = map(int, match.groups())
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
+
+
+def node_center(node):
+    bounds = parse_bounds(node.get("bounds"))
+    if not bounds:
+        return None
+    left, top, right, bottom = bounds
+    return (left + right) // 2, (top + bottom) // 2
+
+
+def find_visible_text_node(root, text, resource_id=None):
+    candidates = []
+    for node in root.iter():
+        if node.get("text") != text or not node_center(node):
+            continue
+        if resource_id and node.get("resource-id") != resource_id:
+            continue
+        candidates.append(node)
+
+    if not candidates:
+        return None
+
+    return min(candidates, key=lambda node: node_center(node)[1])
+
+
+def find_task_action(root, task_name):
+    parent_map = {child: parent for parent in root.iter() for child in parent}
+    task_nodes = [node for node in root.iter() if node.get("text") == task_name]
+
+    for task_node in task_nodes:
+        card = parent_map.get(task_node)
+        while card is not None:
+            action_nodes = [
+                node
+                for node in card.iter()
+                if node.get("text") in TASK_ACTION_TEXTS
+            ]
+            if action_nodes:
+                for action_text in TASK_ACTION_TEXTS:
+                    for action_node in action_nodes:
+                        if action_node.get("text") == action_text:
+                            return action_text, action_node
+            card = parent_map.get(card)
+
+    return None, None
+
+
+def locate_task_action(cli, vmindex, width, height, task_name, max_scrolls=5):
+    for scroll_index in range(max_scrolls + 1):
+        root = dump_ui(cli, vmindex)
+        action_text, action_node = find_task_action(root, task_name)
+
+        if action_text in ("已领取", "已全部领取"):
+            return action_text, None
+
+        center = node_center(action_node) if action_node is not None else None
+        if action_text and center:
+            return action_text, center
+
+        if scroll_index == max_scrolls:
+            break
+
+        swipe_fraction(cli, vmindex, width, height, 0.5, 0.84, 0.5, 0.48, 500)
+        time.sleep(1.5)
+
+    return None, None
+
+
+def open_and_locate_task(cli, vmindex, width, height, task_name):
+    open_chronicle_task_list(cli, vmindex, width, height)
+    return locate_task_action(cli, vmindex, width, height, task_name)
+
+
+def claim_task_if_ready(cli, vmindex, width, height, task_name):
+    action_text, center = open_and_locate_task(cli, vmindex, width, height, task_name)
+
+    if action_text in ("已领取", "已全部领取"):
+        log(f"已完成：{task_name}")
+        return True
+
+    if action_text == "领取" and center:
+        log(f"领取任务奖励：{task_name}")
+        tap(cli, vmindex, *center)
+        finish_claim_dialogs(cli, vmindex, width, height)
+        return True
+
+    log(f"任务尚未进入可领取状态：{task_name}，当前状态={action_text or '未识别'}")
+    return False
 
 
 def read_png_rgb(path):
@@ -563,13 +694,23 @@ def return_to_chronicle_from_circle_page(cli, vmindex, width, height):
 
 
 def browse_one_content(cli, vmindex, width, height):
-    if not ensure_task_ready(cli, vmindex, width, height, "浏览1篇内容", 0.666):
+    task_name = "浏览1篇内容"
+    action_text, center = open_and_locate_task(cli, vmindex, width, height, task_name)
+
+    if action_text in ("已领取", "已全部领取"):
+        log(f"跳过：{task_name} 已领取")
+        return
+    if action_text == "领取":
+        claim_task_if_ready(cli, vmindex, width, height, task_name)
+        return
+    if action_text != "去完成" or not center:
+        log(f"未找到 {task_name} 的去完成按钮，当前状态={action_text or '未识别'}")
         return
 
-    log("执行：浏览1篇内容")
+    log(f"执行：{task_name}")
 
     # 必须从编年史任务卡片的“去完成”进入，再点开一篇内容详情，才会计入任务。
-    tap_fraction(cli, vmindex, width, height, 0.648, 0.666)
+    tap(cli, vmindex, *center)
     time.sleep(6)
     tap_fraction(cli, vmindex, width, height, 0.278, 0.375)
     time.sleep(12)
@@ -577,29 +718,91 @@ def browse_one_content(cli, vmindex, width, height):
     swipe_fraction(cli, vmindex, width, height, 0.5, 0.875, 0.5, 0.52, 600)
     time.sleep(5)
 
-    return_to_chronicle_from_content_feed(cli, vmindex, width, height)
-    if classify_task_button(cli, vmindex, width, height, 0.666) == "claim":
-        claim_visible_chronicle_task(cli, vmindex, width, height, "浏览1篇内容", 0.666)
-    else:
-        log("浏览1篇内容未出现可领取按钮，可能已领取或助手未及时刷新")
+    claim_task_if_ready(cli, vmindex, width, height, task_name)
 
 
 def enter_circle_detail(cli, vmindex, width, height):
-    if not ensure_task_ready(cli, vmindex, width, height, "进入圈子详细页", 0.779):
+    task_name = "进入圈子详细页"
+    action_text, center = open_and_locate_task(cli, vmindex, width, height, task_name)
+
+    if action_text in ("已领取", "已全部领取"):
+        log(f"跳过：{task_name} 已领取")
+        return
+    if action_text == "领取":
+        claim_task_if_ready(cli, vmindex, width, height, task_name)
+        return
+    if action_text != "去完成" or not center:
+        log(f"未找到 {task_name} 的去完成按钮，当前状态={action_text or '未识别'}")
         return
 
-    log("执行：进入圈子详细页")
+    log(f"执行：{task_name}")
     # “去完成”先进入发现/圈子聚合页，再点进一个话题详情才会计入任务。
-    tap_fraction(cli, vmindex, width, height, 0.648, 0.779)
+    tap(cli, vmindex, *center)
     time.sleep(6)
-    tap_fraction(cli, vmindex, width, height, 0.278, 0.603)
+    tap_fraction(cli, vmindex, width, height, 0.37, 0.63)
     time.sleep(10)
 
-    return_to_chronicle_from_circle_page(cli, vmindex, width, height)
-    if classify_task_button(cli, vmindex, width, height, 0.779) == "claim":
-        claim_visible_chronicle_task(cli, vmindex, width, height, "进入圈子详细页", 0.779)
-    else:
-        log("进入圈子详细页未出现可领取按钮，可能已领取或助手未及时刷新")
+    claim_task_if_ready(cli, vmindex, width, height, task_name)
+
+
+def view_region_ranking(cli, vmindex, width, height):
+    task_name = "【周】查看地区排行榜"
+    action_text, center = open_and_locate_task(cli, vmindex, width, height, task_name)
+
+    if action_text in ("已领取", "已全部领取"):
+        log(f"跳过：{task_name} 已领取")
+        return
+    if action_text == "领取":
+        claim_task_if_ready(cli, vmindex, width, height, task_name)
+        return
+    if action_text != "去完成" or not center:
+        log(f"未找到 {task_name} 的去完成按钮，当前状态={action_text or '未识别'}")
+        return
+
+    log(f"执行：{task_name}")
+    tap(cli, vmindex, *center)
+    time.sleep(7)
+    back(cli, vmindex, count=1, delay=2)
+    claim_task_if_ready(cli, vmindex, width, height, task_name)
+
+
+def share_weekly_report(cli, vmindex, width, height):
+    task_name = "【周】分享助手周报"
+    action_text, center = open_and_locate_task(cli, vmindex, width, height, task_name)
+
+    if action_text in ("已领取", "已全部领取"):
+        log(f"跳过：{task_name} 已领取")
+        return
+    if action_text == "领取":
+        claim_task_if_ready(cli, vmindex, width, height, task_name)
+        return
+    if action_text != "去完成" or not center:
+        log(f"未找到 {task_name} 的去完成按钮，当前状态={action_text or '未识别'}")
+        return
+
+    log(f"执行：{task_name}")
+    tap(cli, vmindex, *center)
+    time.sleep(8)
+
+    root = dump_ui(cli, vmindex)
+    share_node = find_visible_text_node(
+        root,
+        "分享",
+        resource_id=f"{DNF_HELPER_PACKAGE}:id/funcation",
+    )
+    share_center = node_center(share_node) if share_node is not None else None
+    if not share_center:
+        log("周报页未找到顶部分享按钮")
+        back(cli, vmindex, count=1, delay=1.5)
+        return
+
+    tap(cli, vmindex, *share_center)
+    time.sleep(3)
+
+    # 打开分享面板即满足任务条件；立即退出，不选择联系人或平台。
+    back(cli, vmindex, count=1, delay=1.5)
+    back(cli, vmindex, count=1, delay=2)
+    claim_task_if_ready(cli, vmindex, width, height, task_name)
 
 
 def enter_weekly_topic(cli, vmindex, width, height):
@@ -615,17 +818,19 @@ def enter_weekly_topic(cli, vmindex, width, height):
 def run_chronicle_app_tasks(cli, vmindex, include_weekly_topic=False):
     width, height = query_screen_size(cli, vmindex)
 
-    open_dnf_home_fresh(cli, vmindex)
-    open_chronicle_task_list(cli, vmindex, width, height, launch_first=False)
+    view_region_ranking(cli, vmindex, width, height)
+    share_weekly_report(cli, vmindex, width, height)
     browse_one_content(cli, vmindex, width, height)
     enter_circle_detail(cli, vmindex, width, height)
 
     if include_weekly_topic:
+        log("兼容执行旧版每周话题详情任务")
         enter_weekly_topic(cli, vmindex, width, height)
         open_chronicle_task_list(cli, vmindex, width, height)
     else:
-        log("跳过：每周浏览话题详细页。如需执行，可添加 --include-weekly-topic")
+        log("跳过已下线的旧版每周话题详情入口")
 
+    open_chronicle_task_list(cli, vmindex, width, height)
     claim_all_chronicle_rewards(cli, vmindex, width, height)
 
     log("DNF助手 App 行为任务已执行完毕")
