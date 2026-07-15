@@ -21,6 +21,14 @@ SCREENSHOT_LOCAL_PATH = ROOT / ".cached" / "mumu_chronicle_state.png"
 UI_DUMP_REMOTE_PATH = "/sdcard/djc_helper_window.xml"
 UI_DUMP_LOCAL_PATH = ROOT / ".cached" / "djc_helper_window.xml"
 TASK_ACTION_TEXTS = ("去完成", "领取", "已领取", "已全部领取")
+DAILY_SIGNIN_Y_FRACTIONS = (0.074, 0.188)
+TASK_VISUAL_Y_FRACTIONS = {
+    "【周】查看地区排行榜": 0.322,
+    "【周】分享助手周报": 0.435,
+    "浏览1篇内容": 0.550,
+    "进入圈子详细页": 0.663,
+}
+TASK_ACTION_X_FRACTION = 0.675
 
 
 def log(message):
@@ -382,7 +390,43 @@ def locate_task_action(cli, vmindex, width, height, task_name, max_scrolls=5):
 
 def open_and_locate_task(cli, vmindex, width, height, task_name):
     open_chronicle_task_list(cli, vmindex, width, height)
+
+    # MuMu occasionally exposes only the top 1080 px of a 1080x1920 WebView to
+    # uiautomator. Try the current viewport first, then use screenshot-based
+    # recognition for the stable task rows before attempting any blind scrolls.
+    action_text, center = locate_task_action(cli, vmindex, width, height, task_name, max_scrolls=0)
+    if action_text:
+        return action_text, center
+
+    action_text, center = locate_task_action_visually(cli, vmindex, width, height, task_name)
+    if action_text:
+        log(f"通过截图识别 {task_name} 按钮状态：{action_text}")
+        return action_text, center
+
     return locate_task_action(cli, vmindex, width, height, task_name)
+
+
+def locate_task_action_visually(cli, vmindex, width, height, task_name):
+    y_fraction = TASK_VISUAL_Y_FRACTIONS.get(task_name)
+    if y_fraction is None:
+        return None, None
+
+    state = classify_task_button(cli, vmindex, width, height, y_fraction)
+    action_text = {
+        "todo": "去完成",
+        "claim": "领取",
+        "done": "已领取",
+    }.get(state)
+    if action_text is None:
+        return None, None
+
+    if state == "done":
+        return action_text, None
+
+    return action_text, (
+        int(width * TASK_ACTION_X_FRACTION),
+        int(height * y_fraction),
+    )
 
 
 def claim_task_if_ready(cli, vmindex, width, height, task_name):
@@ -487,7 +531,9 @@ def classify_task_button(cli, vmindex, width, height, y_fraction):
         return "unknown"
 
     x1 = int(image_width * 0.57)
-    x2 = int(image_width * 0.72)
+    # Include the gray completed-state label to the right of the black/red
+    # action button. The task title itself remains outside this x range.
+    x2 = int(image_width * 0.90)
     y1 = int(image_height * (y_fraction - 0.032))
     y2 = int(image_height * (y_fraction + 0.032))
     total = black = red = gray = 0
@@ -606,9 +652,20 @@ def claim_all_chronicle_rewards(cli, vmindex, width, height, max_pages=6):
     log("开始扫描并领取编年史任务页全部可见奖励")
     total_claimed = 0
 
-    if classify_task_button(cli, vmindex, width, height, 0.074) == "claim":
-        claim_visible_chronicle_task(cli, vmindex, width, height, "DNF助手签到", 0.074)
+    for y_fraction in DAILY_SIGNIN_Y_FRACTIONS:
+        if classify_task_button(cli, vmindex, width, height, y_fraction) != "claim":
+            continue
+
+        claim_visible_chronicle_task(
+            cli,
+            vmindex,
+            width,
+            height,
+            "DNF助手签到",
+            y_fraction,
+        )
         total_claimed += 1
+        break
 
     for page in range(max_pages):
         total_claimed += claim_all_visible_chronicle_rewards(cli, vmindex, width, height)
@@ -633,7 +690,13 @@ def open_chronicle_task_list(cli, vmindex, width, height, launch_first=True):
     tap_fraction(cli, vmindex, width, height, 0.133, 0.128)
     time.sleep(6)
 
-    # 编年史页顶部是签到和已完成任务，向下滑到 App 行为任务卡片。
+    # WebView 会保留上次离开时的滚动位置。先反向滑动到页面顶部，再执行
+    # 一次固定距离的正向滑动，确保后续截图识别的任务行位置稳定。
+    for _ in range(4):
+        swipe_fraction(cli, vmindex, width, height, 0.5, 0.30, 0.5, 0.85, 500)
+        time.sleep(0.8)
+
+    # 编年史页顶部是签到区域，向下滑到 App 行为任务卡片。
     swipe_fraction(cli, vmindex, width, height, 0.5, 0.906, 0.5, 0.375, 700)
     time.sleep(2)
 
