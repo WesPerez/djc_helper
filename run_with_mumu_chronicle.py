@@ -913,7 +913,7 @@ def run_djc_helper():
         created_pause_flag = True
 
     try:
-        return subprocess.call([str(python_exe), "main.py"], cwd=str(ROOT))
+        return subprocess.call([str(python_exe), "main.py", "--no_max_console"], cwd=str(ROOT))
     finally:
         if created_pause_flag and pause_flag.exists():
             pause_flag.unlink()
