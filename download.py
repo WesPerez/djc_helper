@@ -155,6 +155,7 @@ def download_latest_github_release(
         release_file_path = f"{owner}/{repo_name}/releases/download/v{version}/{asset_name}"
 
     # note: 手动测试下载速度时，使用 IDM / 迅雷 等测试，不要直接用chrome测试，速度差很多
+    # re:   https://github.com/fzls/djc_helper/releases
 
     urls: list[str] = []
 
@@ -162,28 +163,43 @@ def download_latest_github_release(
     extend_urls(
         urls,
         [
-            # 3.4MiB/s
+            # 2.0MiB/s
+            f"https://ghproxy.cxkpro.top/https://github.com/{release_file_path}",
+            # 313.4KiB/s
+            f"https://down.npee.cn/?https://github.com/{release_file_path}",
+            # 190.9KiB/s
+            f"https://raw.ihtw.moe/github.com/{release_file_path}",
+            # 461.7KiB/s
+            f"https://github.geekery.cn/https://github.com/{release_file_path}",
+            # 304.9KiB/s
+            f"https://gh.monlor.com/https://github.com/{release_file_path}",
+            # 72.1KiB/s
             f"https://xget.xi-xu.me/gh/{release_file_path}",
-            # 11.4MiB/s
-            f"https://gh-proxy.net/https://github.com/{release_file_path}",
-            # 1.1MiB/s
-            f"https://github.tbedu.top/https://github.com/{release_file_path}",
-            # 4.3MiB/s
+            # 183.1KiB/s
             f"https://ghproxy.it/https://github.com/{release_file_path}",
-            # 1.8MiB/s
+            # 1.2MiB/s
             f"https://cdn.crashmc.com/https://github.com/{release_file_path}",
-            # 316.7KiB/s
+            # 216.1KiB/s
             f"https://ghfast.top/https://github.com/{release_file_path}",
-            # 7.4MiB/s
+            # 18.5MiB/s
             f"https://git.yylx.win/https://github.com/{release_file_path}",
-            # 1.4MiB/s
+            # 506.4KiB/s
             f"https://ghp.keleyaa.com/https://github.com/{release_file_path}",
-            # 3.9MiB/s
+            # 200.3KiB/s
             f"https://github.boki.moe/https://github.com/{release_file_path}",
-            # 6.1MiB/s
+            # 68.0KiB/s
             f"https://kkgithub.com/{release_file_path}",
-            # 3.3MiB/s
+            # 175.7KiB/s
             f"https://gh.h233.eu.org/https://github.com/{release_file_path}",
+        ],
+    )
+
+    # 速度较慢的
+    extend_urls(
+        urls,
+        [
+            # 6.9KiB/s
+            f"https://gh-proxy.net/https://github.com/{release_file_path}",
         ],
     )
 
@@ -191,7 +207,7 @@ def download_latest_github_release(
     extend_urls(
         urls,
         [
-            # 121.5KiB/s
+            # 94.3KiB/s
             f"https://github.com/{release_file_path}",
         ],
     )
@@ -212,6 +228,8 @@ def download_latest_github_release(
     extend_urls(
         memo_invalid_mirror_list,
         [
+            # failed
+            f"https://github.tbedu.top/https://github.com/{release_file_path}",
             # timeout
             f"https://dgithub.xyz/{release_file_path}",
             # failed
@@ -329,40 +347,42 @@ def download_github_raw_content(
     if TEST_SPEED_MODE:
         logger.warning("当前为测速模式，将禁用洗牌流程，并依次尝试各个镜像，从而进行对比")
 
+    # re: https://github.com/fzls/djc_helper/blob/master/CHANGELOG.MD
+
     urls: list[str] = []
 
     # 可用性较高的几个镜像
     extend_urls(
         urls,
         [
-            # 285.5KiB/s
+            # 276.9KiB/s
+            f"https://fastly.jsdelivr.net/gh/{owner}/{repo_name}@{branch_name}/{filepath_in_repo}",
+            # 27.1KiB/s
             f"https://wget.la/https://raw.githubusercontent.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
-            # 824.9KiB/s
+            # 46.0KiB/s
             f"https://hk.gh-proxy.org/https://raw.githubusercontent.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
-            # 92.9KiB/s
+            # 135.6KiB/s
             f"https://hub.glowp.xyz/https://raw.githubusercontent.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
-            # 520.7KiB/s
+            # 494.2KiB/s
             f"https://cdn.gh-proxy.org/https://raw.githubusercontent.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
-            # 191.1KiB/s
+            # 134.9KiB/s
             f"https://hk.gh-proxy.com/https://raw.githubusercontent.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
-            # 118.1KiB/s
+            # 66.2KiB/s
             f"https://ghproxy.net/https://raw.githubusercontent.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
-            # 85.4KiB/s
+            # 150.6KiB/s
             f"https://g.blfrp.cn/https://raw.githubusercontent.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
-            # 144.7KiB/s
+            # 91.6KiB/s
             # 最新地址可见：https://ghproxy.link/
             f"https://ghfast.top/https://raw.githubusercontent.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
-            # 196.8KiB/s
+            # 171.9KiB/s
             f"https://gh.catmak.name/https://raw.githubusercontent.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
-            # 429.0KiB/s
-            f"https://raw.kkgithub.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
-            # 184.9KiB/s
+            # 219.3KiB/s
             f"https://gh-proxy.com/https://raw.githubusercontent.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
-            # 207.9KiB/s
+            # 38.9KiB/s
             f"https://cdn.jsdelivr.net/gh/{owner}/{repo_name}@{branch_name}/{filepath_in_repo}",
-            # 86.9KiB/s
+            # 113.8KiB/s
             f"https://gcore.jsdelivr.net/gh/{owner}/{repo_name}@{branch_name}/{filepath_in_repo}",
-            # 683.9KiB/s
+            # 903.3KiB/s
             f"https://cdn.jsdmirror.com/gh/{owner}/{repo_name}@{branch_name}/{filepath_in_repo}",
         ],
     )
@@ -399,12 +419,12 @@ def download_github_raw_content(
     extend_urls(
         memo_invalid_mirror_list,
         [
+            # timeout
+            f"https://raw.kkgithub.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
             # failed
             f"https://github.3x25.com/https://raw.githubusercontent.com/{owner}/{repo_name}/{branch_name}/{filepath_in_repo}",
             # failed
             f"https://hub.gitmirror.com/https://raw.githubusercontent.com/{owner}/{repo_name}/refs/heads/{branch_name}/{filepath_in_repo}",
-            # timeout
-            f"https://fastly.jsdelivr.net/gh/{owner}/{repo_name}@{branch_name}/{filepath_in_repo}",
             # aborted
             f"https://jsdelivr.b-cdn.net/gh/{owner}/{repo_name}@{branch_name}/{filepath_in_repo}",
             # timeout
