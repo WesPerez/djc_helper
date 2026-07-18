@@ -155,6 +155,7 @@ def download_latest_github_release(
         release_file_path = f"{owner}/{repo_name}/releases/download/v{version}/{asset_name}"
 
     # note: 手动测试下载速度时，使用 IDM / 迅雷 等测试，不要直接用chrome测试，速度差很多
+    # re:   https://github.com/fzls/djc_helper/releases
 
     urls: list[str] = []
 
@@ -162,28 +163,43 @@ def download_latest_github_release(
     extend_urls(
         urls,
         [
-            # 3.4MiB/s
+            # 2.0MiB/s
+            f"https://ghproxy.cxkpro.top/https://github.com/{release_file_path}",
+            # 313.4KiB/s
+            f"https://down.npee.cn/?https://github.com/{release_file_path}",
+            # 190.9KiB/s
+            f"https://raw.ihtw.moe/github.com/{release_file_path}",
+            # 461.7KiB/s
+            f"https://github.geekery.cn/https://github.com/{release_file_path}",
+            # 304.9KiB/s
+            f"https://gh.monlor.com/https://github.com/{release_file_path}",
+            # 72.1KiB/s
             f"https://xget.xi-xu.me/gh/{release_file_path}",
-            # 11.4MiB/s
-            f"https://gh-proxy.net/https://github.com/{release_file_path}",
-            # 1.1MiB/s
-            f"https://github.tbedu.top/https://github.com/{release_file_path}",
-            # 4.3MiB/s
+            # 183.1KiB/s
             f"https://ghproxy.it/https://github.com/{release_file_path}",
-            # 1.8MiB/s
+            # 1.2MiB/s
             f"https://cdn.crashmc.com/https://github.com/{release_file_path}",
-            # 316.7KiB/s
+            # 216.1KiB/s
             f"https://ghfast.top/https://github.com/{release_file_path}",
-            # 7.4MiB/s
+            # 18.5MiB/s
             f"https://git.yylx.win/https://github.com/{release_file_path}",
-            # 1.4MiB/s
+            # 506.4KiB/s
             f"https://ghp.keleyaa.com/https://github.com/{release_file_path}",
-            # 3.9MiB/s
+            # 200.3KiB/s
             f"https://github.boki.moe/https://github.com/{release_file_path}",
-            # 6.1MiB/s
+            # 68.0KiB/s
             f"https://kkgithub.com/{release_file_path}",
-            # 3.3MiB/s
+            # 175.7KiB/s
             f"https://gh.h233.eu.org/https://github.com/{release_file_path}",
+        ],
+    )
+
+    # 速度较慢的
+    extend_urls(
+        urls,
+        [
+            # 6.9KiB/s
+            f"https://gh-proxy.net/https://github.com/{release_file_path}",
         ],
     )
 
@@ -191,7 +207,7 @@ def download_latest_github_release(
     extend_urls(
         urls,
         [
-            # 121.5KiB/s
+            # 94.3KiB/s
             f"https://github.com/{release_file_path}",
         ],
     )
@@ -212,6 +228,8 @@ def download_latest_github_release(
     extend_urls(
         memo_invalid_mirror_list,
         [
+            # failed
+            f"https://github.tbedu.top/https://github.com/{release_file_path}",
             # timeout
             f"https://dgithub.xyz/{release_file_path}",
             # failed
