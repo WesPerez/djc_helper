@@ -22,12 +22,12 @@ UI_DUMP_REMOTE_PATH = "/sdcard/djc_helper_window.xml"
 UI_DUMP_LOCAL_PATH = ROOT / ".cached" / "djc_helper_window.xml"
 TASK_ACTION_TEXTS = ("去完成", "领取", "已领取", "已全部领取")
 DAILY_SIGNIN_Y_FRACTIONS = (0.074, 0.188)
-TASK_VISUAL_Y_FRACTIONS = {
-    "【周】查看地区排行榜": 0.322,
-    "【周】分享助手周报": 0.435,
-    "浏览1篇内容": 0.550,
-    "进入圈子详细页": 0.663,
-}
+TASK_VISUAL_ORDER = (
+    "【周】查看地区排行榜",
+    "【周】分享助手周报",
+    "浏览1篇内容",
+    "进入圈子详细页",
+)
 TASK_ACTION_X_FRACTION = 0.675
 
 
@@ -407,11 +407,24 @@ def open_and_locate_task(cli, vmindex, width, height, task_name):
 
 
 def locate_task_action_visually(cli, vmindex, width, height, task_name):
-    y_fraction = TASK_VISUAL_Y_FRACTIONS.get(task_name)
-    if y_fraction is None:
+    if task_name not in TASK_VISUAL_ORDER:
         return None, None
 
-    state = classify_task_button(cli, vmindex, width, height, y_fraction)
+    try:
+        image_path = capture_screen(cli, vmindex)
+        image_width, image_height, channels, rows = read_png_rgb(image_path)
+    except Exception as exc:
+        log(f"截图识别任务行失败，将按未知状态处理：{exc}")
+        return None, None
+
+    task_rows = find_task_row_y_fractions(image_width, image_height, channels, rows)
+    task_index = TASK_VISUAL_ORDER.index(task_name)
+    if len(task_rows) <= task_index:
+        log(f"截图仅识别到 {len(task_rows)} 个连续任务卡片，无法定位 {task_name}")
+        return None, None
+
+    y_fraction = task_rows[task_index]
+    state = classify_task_button_pixels(image_width, image_height, channels, rows, y_fraction)
     action_text = {
         "todo": "去完成",
         "claim": "领取",
@@ -423,6 +436,7 @@ def locate_task_action_visually(cli, vmindex, width, height, task_name):
     if state == "done":
         return action_text, None
 
+    log(f"动态定位 {task_name}：y={y_fraction:.3f}，状态={action_text}")
     return action_text, (
         int(width * TASK_ACTION_X_FRACTION),
         int(height * y_fraction),
@@ -440,7 +454,13 @@ def claim_task_if_ready(cli, vmindex, width, height, task_name):
         log(f"领取任务奖励：{task_name}")
         tap(cli, vmindex, *center)
         finish_claim_dialogs(cli, vmindex, width, height)
-        return True
+        action_text, _ = open_and_locate_task(cli, vmindex, width, height, task_name)
+        if action_text in ("已领取", "已全部领取"):
+            log(f"已确认领取：{task_name}")
+            return True
+
+        log(f"领取后未确认完成：{task_name}，当前状态={action_text or '未识别'}")
+        return False
 
     log(f"任务尚未进入可领取状态：{task_name}，当前状态={action_text or '未识别'}")
     return False
@@ -522,14 +542,7 @@ def paeth_predictor(left, up, up_left):
     return up_left
 
 
-def classify_task_button(cli, vmindex, width, height, y_fraction):
-    try:
-        image_path = capture_screen(cli, vmindex)
-        image_width, image_height, channels, rows = read_png_rgb(image_path)
-    except Exception as exc:
-        log(f"截图识别任务按钮失败，将按未知状态处理：{exc}")
-        return "unknown"
-
+def classify_task_button_pixels(image_width, image_height, channels, rows, y_fraction):
     x1 = int(image_width * 0.57)
     # Include the gray completed-state label to the right of the black/red
     # action button. The task title itself remains outside this x range.
@@ -566,6 +579,80 @@ def classify_task_button(cli, vmindex, width, height, y_fraction):
     if gray_ratio > 0.015:
         return "done"
     return "unknown"
+
+
+def classify_task_button(cli, vmindex, width, height, y_fraction):
+    try:
+        image_path = capture_screen(cli, vmindex)
+        image_width, image_height, channels, rows = read_png_rgb(image_path)
+    except Exception as exc:
+        log(f"截图识别任务按钮失败，将按未知状态处理：{exc}")
+        return "unknown"
+
+    return classify_task_button_pixels(image_width, image_height, channels, rows, y_fraction)
+
+
+def is_task_card_background(r, g, b):
+    return (
+        232 <= r <= 249
+        and 235 <= g <= 252
+        and 239 <= b <= 255
+        and r <= g <= b
+        and b - r <= 14
+    )
+
+
+def find_task_row_y_fractions(image_width, image_height, channels, rows):
+    # The WebView does not reliably expose its task text through uiautomator.
+    # Detect the repeated light-gray task cards instead of binding task names to
+    # absolute Y coordinates, which drift when the page layout changes.
+    sample_xs = [int(image_width * fraction) for fraction in (0.45, 0.50, 0.55)]
+    card_rows = []
+    for y, row in enumerate(rows):
+        matches = 0
+        for x in sample_xs:
+            idx = x * channels
+            if is_task_card_background(row[idx], row[idx + 1], row[idx + 2]):
+                matches += 1
+        if matches >= 2:
+            card_rows.append(y)
+
+    segments = []
+    start = last = None
+    for y in card_rows:
+        if start is None:
+            start = last = y
+        elif y - last <= 3:
+            last = y
+        else:
+            segments.append((start, last))
+            start = last = y
+    if start is not None:
+        segments.append((start, last))
+
+    min_height = image_height * 0.07
+    max_height = image_height * 0.15
+    centers = [
+        (start + end) / 2 / image_height
+        for start, end in segments
+        if min_height <= end - start + 1 <= max_height
+    ]
+
+    # The actual task cards form the longest evenly spaced run. This excludes
+    # similarly colored fragments inside the larger daily-signin card.
+    best_run = []
+    for start_index in range(len(centers)):
+        run = [centers[start_index]]
+        for center in centers[start_index + 1 :]:
+            gap = center - run[-1]
+            if 0.07 <= gap <= 0.16:
+                run.append(center)
+            else:
+                break
+        if len(run) > len(best_run):
+            best_run = run
+
+    return best_run
 
 
 def find_visible_claim_buttons(cli, vmindex):
@@ -762,13 +849,12 @@ def browse_one_content(cli, vmindex, width, height):
 
     if action_text in ("已领取", "已全部领取"):
         log(f"跳过：{task_name} 已领取")
-        return
+        return True
     if action_text == "领取":
-        claim_task_if_ready(cli, vmindex, width, height, task_name)
-        return
+        return claim_task_if_ready(cli, vmindex, width, height, task_name)
     if action_text != "去完成" or not center:
         log(f"未找到 {task_name} 的去完成按钮，当前状态={action_text or '未识别'}")
-        return
+        return False
 
     log(f"执行：{task_name}")
 
@@ -781,7 +867,7 @@ def browse_one_content(cli, vmindex, width, height):
     swipe_fraction(cli, vmindex, width, height, 0.5, 0.875, 0.5, 0.52, 600)
     time.sleep(5)
 
-    claim_task_if_ready(cli, vmindex, width, height, task_name)
+    return claim_task_if_ready(cli, vmindex, width, height, task_name)
 
 
 def enter_circle_detail(cli, vmindex, width, height):
@@ -790,13 +876,12 @@ def enter_circle_detail(cli, vmindex, width, height):
 
     if action_text in ("已领取", "已全部领取"):
         log(f"跳过：{task_name} 已领取")
-        return
+        return True
     if action_text == "领取":
-        claim_task_if_ready(cli, vmindex, width, height, task_name)
-        return
+        return claim_task_if_ready(cli, vmindex, width, height, task_name)
     if action_text != "去完成" or not center:
         log(f"未找到 {task_name} 的去完成按钮，当前状态={action_text or '未识别'}")
-        return
+        return False
 
     log(f"执行：{task_name}")
     # “去完成”先进入发现/圈子聚合页，再点进一个话题详情才会计入任务。
@@ -805,7 +890,7 @@ def enter_circle_detail(cli, vmindex, width, height):
     tap_fraction(cli, vmindex, width, height, 0.37, 0.63)
     time.sleep(10)
 
-    claim_task_if_ready(cli, vmindex, width, height, task_name)
+    return claim_task_if_ready(cli, vmindex, width, height, task_name)
 
 
 def view_region_ranking(cli, vmindex, width, height):
@@ -814,19 +899,18 @@ def view_region_ranking(cli, vmindex, width, height):
 
     if action_text in ("已领取", "已全部领取"):
         log(f"跳过：{task_name} 已领取")
-        return
+        return True
     if action_text == "领取":
-        claim_task_if_ready(cli, vmindex, width, height, task_name)
-        return
+        return claim_task_if_ready(cli, vmindex, width, height, task_name)
     if action_text != "去完成" or not center:
         log(f"未找到 {task_name} 的去完成按钮，当前状态={action_text or '未识别'}")
-        return
+        return False
 
     log(f"执行：{task_name}")
     tap(cli, vmindex, *center)
     time.sleep(7)
     back(cli, vmindex, count=1, delay=2)
-    claim_task_if_ready(cli, vmindex, width, height, task_name)
+    return claim_task_if_ready(cli, vmindex, width, height, task_name)
 
 
 def share_weekly_report(cli, vmindex, width, height):
@@ -835,13 +919,12 @@ def share_weekly_report(cli, vmindex, width, height):
 
     if action_text in ("已领取", "已全部领取"):
         log(f"跳过：{task_name} 已领取")
-        return
+        return True
     if action_text == "领取":
-        claim_task_if_ready(cli, vmindex, width, height, task_name)
-        return
+        return claim_task_if_ready(cli, vmindex, width, height, task_name)
     if action_text != "去完成" or not center:
         log(f"未找到 {task_name} 的去完成按钮，当前状态={action_text or '未识别'}")
-        return
+        return False
 
     log(f"执行：{task_name}")
     tap(cli, vmindex, *center)
@@ -857,7 +940,7 @@ def share_weekly_report(cli, vmindex, width, height):
     if not share_center:
         log("周报页未找到顶部分享按钮")
         back(cli, vmindex, count=1, delay=1.5)
-        return
+        return False
 
     tap(cli, vmindex, *share_center)
     time.sleep(3)
@@ -865,7 +948,7 @@ def share_weekly_report(cli, vmindex, width, height):
     # 打开分享面板即满足任务条件；立即退出，不选择联系人或平台。
     back(cli, vmindex, count=1, delay=1.5)
     back(cli, vmindex, count=1, delay=2)
-    claim_task_if_ready(cli, vmindex, width, height, task_name)
+    return claim_task_if_ready(cli, vmindex, width, height, task_name)
 
 
 def enter_weekly_topic(cli, vmindex, width, height):
@@ -881,10 +964,25 @@ def enter_weekly_topic(cli, vmindex, width, height):
 def run_chronicle_app_tasks(cli, vmindex, include_weekly_topic=False):
     width, height = query_screen_size(cli, vmindex)
 
-    view_region_ranking(cli, vmindex, width, height)
-    share_weekly_report(cli, vmindex, width, height)
-    browse_one_content(cli, vmindex, width, height)
-    enter_circle_detail(cli, vmindex, width, height)
+    tasks = (
+        ("【周】查看地区排行榜", view_region_ranking),
+        ("【周】分享助手周报", share_weekly_report),
+        ("浏览1篇内容", browse_one_content),
+        ("进入圈子详细页", enter_circle_detail),
+    )
+    failed_tasks = []
+
+    for task_name, task in tasks:
+        if not task(cli, vmindex, width, height):
+            failed_tasks.append(task_name)
+
+    if failed_tasks:
+        log(f"首次执行后未确认完成，将重试：{', '.join(failed_tasks)}")
+        retry_failed_tasks = []
+        for task_name, task in tasks:
+            if task_name in failed_tasks and not task(cli, vmindex, width, height):
+                retry_failed_tasks.append(task_name)
+        failed_tasks = retry_failed_tasks
 
     if include_weekly_topic:
         log("兼容执行旧版每周话题详情任务")
@@ -895,6 +993,9 @@ def run_chronicle_app_tasks(cli, vmindex, include_weekly_topic=False):
 
     open_chronicle_task_list(cli, vmindex, width, height)
     claim_all_chronicle_rewards(cli, vmindex, width, height)
+
+    if failed_tasks:
+        raise RuntimeError(f"DNF助手 App 任务未完成：{', '.join(failed_tasks)}")
 
     log("DNF助手 App 行为任务已执行完毕")
 
@@ -932,21 +1033,29 @@ def parse_args():
 
 def main():
     args = parse_args()
+    app_task_error = None
 
     if not args.skip_app_tasks:
-        cli = find_mumu_cli(args.mumu_cli)
-        log(f"使用 MuMu CLI：{cli}")
-        ensure_mumu_started(cli, args.vmindex, args.startup_timeout)
-        require_dnf_helper_installed(cli, args.vmindex)
-        run_chronicle_app_tasks(cli, args.vmindex, args.include_weekly_topic)
+        try:
+            cli = find_mumu_cli(args.mumu_cli)
+            log(f"使用 MuMu CLI：{cli}")
+            ensure_mumu_started(cli, args.vmindex, args.startup_timeout)
+            require_dnf_helper_installed(cli, args.vmindex)
+            run_chronicle_app_tasks(cli, args.vmindex, args.include_weekly_topic)
+        except Exception as exc:
+            app_task_error = exc
+            log(f"MuMu/DNF助手 App 阶段失败：{exc}")
     else:
         log("跳过 MuMu/DNF助手 App 行为任务")
 
     if not args.skip_djc_helper:
-        return run_djc_helper()
+        helper_exit_code = run_djc_helper()
+        if helper_exit_code != 0:
+            return helper_exit_code
+    else:
+        log("跳过 djc_helper")
 
-    log("跳过 djc_helper")
-    return 0
+    return 1 if app_task_error else 0
 
 
 if __name__ == "__main__":
