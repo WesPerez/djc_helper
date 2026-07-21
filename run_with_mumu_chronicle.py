@@ -144,6 +144,29 @@ def app_info(cli, vmindex, package_name):
     )
 
 
+def parse_app_state(raw):
+    try:
+        parsed = json.loads(raw.strip())
+        return parsed.get("state") if isinstance(parsed, dict) else None
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        state_match = re.search(r'"state"\s*:\s*"([^"]+)"', raw)
+        return state_match.group(1) if state_match else None
+
+
+def wait_for_app_running(cli, vmindex, package_name, timeout_seconds=15):
+    deadline = time.time() + timeout_seconds
+    last_raw = ""
+
+    while time.time() < deadline:
+        last_raw = app_info(cli, vmindex, package_name)
+        if parse_app_state(last_raw) == "running":
+            return True, last_raw
+
+        time.sleep(1)
+
+    return False, last_raw
+
+
 def require_dnf_helper_installed(cli, vmindex):
     raw = app_info(cli, vmindex, DNF_HELPER_PACKAGE)
     installed_raw = mumu(
@@ -208,7 +231,7 @@ def force_stop_app(cli, vmindex, package_name):
 
 
 def launch_dnf_helper(cli, vmindex):
-    mumu(
+    output = mumu(
         cli,
         "control",
         "--vmindex",
@@ -220,7 +243,13 @@ def launch_dnf_helper(cli, vmindex):
         timeout=30,
         check=False,
     )
-    time.sleep(5)
+    running, state_raw = wait_for_app_running(cli, vmindex, DNF_HELPER_PACKAGE)
+    if not running:
+        raise RuntimeError(
+            "MuMu CLI 未能启动 DNF助手。"
+            f"启动输出：{output.strip() or '<empty>'}；"
+            f"应用状态：{state_raw.strip() or '<empty>'}"
+        )
 
 
 def run_am_start(cli, vmindex, component, extras):
@@ -262,14 +291,23 @@ def reset_to_home(cli, vmindex):
 
 def open_dnf_home_fresh(cli, vmindex):
     force_stop_app(cli, vmindex, DNF_HELPER_PACKAGE)
-    adb_shell(
+    start_output = adb_shell(
         cli,
         vmindex,
         f"am start -S -n {DNF_HELPER_PACKAGE}/{DNF_HELPER_WELCOME_ACTIVITY}",
         timeout=30,
         check=False,
     )
-    time.sleep(8)
+    running, _ = wait_for_app_running(cli, vmindex, DNF_HELPER_PACKAGE, timeout_seconds=8)
+    if not running:
+        log(
+            "直接启动 DNF助手 WelcomeActivity 后应用未运行，"
+            f"改用 MuMu app launch。原始输出：{start_output.strip() or '<empty>'}"
+        )
+        launch_dnf_helper(cli, vmindex)
+
+    time.sleep(5)
+    dismiss_startup_update_dialog(cli, vmindex)
 
 
 def tap_dnf_home_tab(cli, vmindex, width, height):
@@ -310,6 +348,35 @@ def dump_ui(cli, vmindex, attempts=3):
         time.sleep(1.5)
 
     raise RuntimeError("无法读取 DNF助手页面结构")
+
+
+def has_exact_ui_text(root, text):
+    return any(node.get("text") == text for node in root.iter())
+
+
+def dismiss_startup_update_dialog(cli, vmindex):
+    try:
+        root = dump_ui(cli, vmindex)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "无法确认 DNF助手是否显示版本更新提示，为避免误触升级已停止 App 自动操作"
+        ) from exc
+
+    if not has_exact_ui_text(root, "版本更新"):
+        return False
+
+    log("检测到 DNF助手版本更新提示，使用 Android 返回键取消，避免误触应用升级")
+    back(cli, vmindex, count=1, delay=2)
+
+    try:
+        root = dump_ui(cli, vmindex)
+    except RuntimeError as exc:
+        raise RuntimeError("关闭版本更新提示后无法确认页面状态，已停止 App 自动操作") from exc
+
+    if has_exact_ui_text(root, "版本更新"):
+        raise RuntimeError("DNF助手版本更新提示无法关闭，为避免误触升级已停止 App 自动操作")
+
+    return True
 
 
 def parse_bounds(value):
@@ -796,6 +863,8 @@ def claim_visible_chronicle_task(cli, vmindex, width, height, task_name, y_fract
 
 def finish_claim_dialogs(cli, vmindex, width, height):
     time.sleep(1.5)
+
+    dismiss_startup_update_dialog(cli, vmindex)
 
     # DNF助手签到会先弹“奖励确认领取”，右侧红色按钮是“确认”。
     # 普通任务可能直接弹“获得奖励”，这里先尝试确认，再尝试关闭成功弹窗。
