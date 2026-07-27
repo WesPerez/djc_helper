@@ -688,8 +688,8 @@ class DjcHelper:
             ("DNF助手编年史", self.dnf_helper_chronicle),
             ("绑定手机活动", self.dnf_bind_phone),
             ("回流引导秘籍", self.dnf_recall_guide),
-            ("DNF心悦wpe", self.dnf_xinyue_wpe),
             ("夏日礼包", self.dnf_summer_gift_act),
+            ("DNF落地页活动_ide", self.dnf_luodiye_ide),
         ]
 
     def expired_activities(self) -> list[tuple[str, Callable]]:
@@ -697,13 +697,13 @@ class DjcHelper:
         # hack: 已经过期非常久且很久未再出的的活动相关信息已挪到 djc_helper_tomb.py ，需要时可前往查看
         # undone: 当这个列表下方过期很久的活动变得很多的时候，就再将部分挪到上面这个墓地中
         return [
+            ("DNF心悦wpe", self.dnf_xinyue_wpe),
             ("助手限定活动_3", self.dnf_helper_limit_act_3), # 夏日破浪补给站
             ("井盖杯强者之路", self.dnf_jinggai_stronger),
             ("助手限定活动_2", self.dnf_helper_limit_act_2), # 海滩派对
             ("kol勇士召回", self.dnf_kol_recall),
             ("colg其他活动", self.colg_other_act),
             ("WeGame活动", self.dnf_wegame),
-            ("DNF落地页活动_ide", self.dnf_luodiye_ide),
             ("DNF周年庆登录活动", self.dnf_anniversary),
             ("周年特别节目", self.dnf_anniversary_special_act),
             ("像素拼图", self.dnf_pixel_puzzle),
@@ -6594,7 +6594,7 @@ class DjcHelper:
         self.check_dnf_luodiye_ide()
 
         def query_info() -> tuple[int, int, int]:
-            res = self.dnf_luodiye_ide_op("初始化", "554669", print_res=False)
+            res = self.dnf_luodiye_ide_op("初始化", "581987", print_res=False)
             raw_info = res["jData"]
 
             # 抽奖次数
@@ -6602,13 +6602,15 @@ class DjcHelper:
             # iLottery = 0
 
             # # 累计登录天数
-            iLoginTotal = int(raw_info["iCheckIn"])
+            # iLoginTotal = int(raw_info["iCheckIn"])
+            iLoginTotal = 0
 
             # 总共获得抽奖次数
-            # jLotteryTotal = int(raw_info["iLottery"])
-            jLotteryTotal = 0
+            jLotteryTotal = int(raw_info["iLotteryNum"])
+            # jLotteryTotal = 0
 
-            jFinishedLotteryCount = jLotteryTotal - iLottery
+            # jFinishedLotteryCount = jLotteryTotal - iLottery
+            jFinishedLotteryCount = iLoginTotal
 
             return iLottery, iLoginTotal, jFinishedLotteryCount
 
@@ -6648,67 +6650,62 @@ class DjcHelper:
         # try_daily_signin()
         # # self.dnf_luodiye_ide_op("每日签到", "441321")
 
-        # login_gifts_list = [
-        #     (1, 5),
-        #     (2, 10),
-        #     (3, 15),
-        #     (4, 20),
-        #     (5, 25),
-        #     (6, 30),
-        #     (7, 35),
-        # ]
-        # _, _, jFinishedLotteryCount = query_info()
-        # logger.info(f"累计抽奖次数为 {jFinishedLotteryCount}")
-        # for gift_index, require_lottery_count in login_gifts_list:
-        #     if jFinishedLotteryCount >= require_lottery_count:
-        #         self.dnf_luodiye_ide_op(
-        #             f"[{gift_index}] 累积抽奖次数奖励 {require_lottery_count}次", "485995", index=gift_index
-        #         )
-        #         time.sleep(3)
-        #     else:
-        #         logger.warning(f"[{gift_index}] 当前累计抽奖次数未达到{require_lottery_count}，将不尝试领取该累计奖励")
-
-        self.dnf_luodiye_ide_op("见面礼包", "554872")
+        self.dnf_luodiye_ide_op("见面礼包", "581991")
 
         # 打卡前等一会，确保不会因频率过快被拦截？
         time.sleep(5)
-        self.dnf_luodiye_ide_op("活跃挑战打卡", "554876")
+        self.dnf_luodiye_ide_op("通关深渊最终调律者", "582074")
 
-        self.dnf_luodiye_ide_op("补打卡-浏览一篇DNF助手资讯", "554918")
-        self.dnf_luodiye_ide_op("补打卡-记录关注DNF官方微信号", "554919")
-        self.dnf_luodiye_ide_op("补打卡-领取关注DNF官方微信号", "554928")
+        self.dnf_luodiye_ide_op("补打卡-记录跳转", "582080")
+        self.dnf_luodiye_ide_op("补打卡-领取关注DNF官方微信号", "582081")
+        # self.dnf_luodiye_ide_op("补打卡-补签-浏览DNF助手文章", "582079")
 
-        _, iLoginTotal, _ = query_info()
-        logger.info(f"打卡后游戏登录天数为 {iLoginTotal}")
-        for idx, signin_day in enumerate([3, 7, 10, 14, 21, 25]):
-            if iLoginTotal < signin_day:
-                logger.warning(f"打卡后尚未登录 {signin_day} 天，跳过当前奖励")
-                continue
-
-            # 6档，index: 0~5
-            # re: 后续还是这个的话，记得确认到底是从0开始还是1，都有过
-            self.dnf_luodiye_ide_op(f"打卡后累计登录 {signin_day} 天奖励", "554945", index=idx)
-            time.sleep(3)
-
-        # # self.dnf_luodiye_ide_op("红包中奖信息", "501908")
-        async_message_box(
-            "落地页活动页面有个拉回归好友的活动，点击左侧18周年庆生礼tab，邀请符合条件的好友后可以获得抽奖次数，抽奖有几率获得11增幅券、Q币等奖励，有兴趣的请自行参与",
-            "26.6 落地页拉回归活动",
-            show_once=True,
-            open_url=get_act_url("DNF落地页活动_ide"),
-        )
-
-        self.dnf_luodiye_ide_op("感恩回馈好礼", "555324")
-
-        self.dnf_luodiye_ide_op("创建破浪者角色", "555328")
-        self.dnf_luodiye_ide_op("创建女蓝拳", "555347")
-        self.dnf_luodiye_ide_op("通关末世录军团本", "555736")
+        # _, iLoginTotal, _ = query_info()
+        # logger.info(f"打卡后游戏登录天数为 {iLoginTotal}")
+        # for idx, signin_day in enumerate([3, 7, 10, 14, 21, 25]):
+        #     if iLoginTotal < signin_day:
+        #         logger.warning(f"打卡后尚未登录 {signin_day} 天，跳过当前奖励")
+        #         continue
+        #
+        #     # 6档，index: 0~5
+        #     # re: 后续还是这个的话，记得确认到底是从0开始还是1，都有过
+        #     self.dnf_luodiye_ide_op(f"打卡后累计登录 {signin_day} 天奖励", "554945", index=idx)
+        #     time.sleep(3)
+        #
+        # # # self.dnf_luodiye_ide_op("红包中奖信息", "501908")
+        # async_message_box(
+        #     "落地页活动页面有个拉回归好友的活动，点击左侧18周年庆生礼tab，邀请符合条件的好友后可以获得抽奖次数，抽奖有几率获得11增幅券、Q币等奖励，有兴趣的请自行参与",
+        #     "26.6 落地页拉回归活动",
+        #     show_once=True,
+        #     open_url=get_act_url("DNF落地页活动_ide"),
+        # )
 
         iLotteryCount, _, _ = query_info()
         logger.info(f"剩余抽奖次数 {iLotteryCount}")
         for idx in range_from_one(iLotteryCount):
-            self.dnf_luodiye_ide_op(f"{idx}/{iLotteryCount} 抽奖", "555852")
+            self.dnf_luodiye_ide_op(f"{idx}/{iLotteryCount} 抽奖", "582075")
             time.sleep(3)
+
+        login_gifts_list = [
+            (1, 3),
+            (2, 6),
+            (3, 9),
+            (4, 12),
+            (5, 16),
+            (6, 20),
+            (7, 24),
+            (8, 28),
+        ]
+        _, _, jFinishedLotteryCount = query_info()
+        logger.info(f"累计抽奖次数为 {jFinishedLotteryCount}")
+        for gift_index, require_lottery_count in login_gifts_list:
+            if jFinishedLotteryCount >= require_lottery_count:
+                self.dnf_luodiye_ide_op(
+                    f"[{gift_index}] 累积抽奖次数奖励 {require_lottery_count}次", "582076", index=gift_index
+                )
+                time.sleep(3)
+            else:
+                logger.warning(f"[{gift_index}] 当前累计抽奖次数未达到{require_lottery_count}，将不尝试领取该累计奖励")
 
         # tasks = [
         #     ("每日通关深渊任务", "513017"),
@@ -11835,6 +11832,6 @@ if __name__ == "__main__":
         djcHelper.get_bind_role_list()
 
         # djcHelper.dnf_kol()
-        djcHelper.dnf_helper_limit_act_3()
+        djcHelper.dnf_luodiye_ide()
 
     pause()
