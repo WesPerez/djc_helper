@@ -63,6 +63,7 @@ not_ams_activities = [
     newNotAmsActInfo("2026-06-11 00:00:00", "2026-09-09 23:59:59", "回流引导秘籍"),
     newNotAmsActInfo("2026-06-11 10:00:00", "2026-07-15 23:59:59", "DNF心悦wpe"),
     newNotAmsActInfo("2026-07-08 00:00:00", "2026-08-19 23:59:59", "夏日礼包"),
+    newNotAmsActInfo("2026-07-23 10:00:00", "2026-08-26 18:00:00", "DNF落地页活动_ide"),
     #
     # 已过期活动
     #
@@ -72,7 +73,6 @@ not_ams_activities = [
     newNotAmsActInfo("2026-06-11 09:30:00", "2026-07-08 23:59:59", "kol勇士召回"),
     newNotAmsActInfo("2026-06-11 09:30:00", "2026-07-08 23:59:59", "colg其他活动"),
     newNotAmsActInfo("2026-06-03 09:30:00", "2026-07-08 23:59:59", "WeGame活动"),
-    newNotAmsActInfo("2026-06-11 09:30:00", "2026-07-08 18:00:00", "DNF落地页活动_ide"),
     newNotAmsActInfo("2026-06-11 00:00:00", "2026-07-09 23:59:59", "DNF周年庆登录活动"),
     newNotAmsActInfo("2026-05-30 00:00:00", "2026-07-08 23:59:59", "周年特别节目"),
     newNotAmsActInfo("2026-05-28 09:00:00", "2026-06-30 23:59:59", "像素拼图"),
@@ -134,6 +134,7 @@ act_name_to_url = {
     "回流引导秘籍": "https://dnf.qq.com/cp/a20260107guide/",
     "DNF心悦wpe": "https://act.xinyue.qq.com/act/a20260601dnf/index.html",
     "夏日礼包": "https://dnf.qq.com/cp/a20260709gift/index.html",
+    "DNF落地页活动_ide": "https://dnf.qq.com/cp/celebration/",
     #
     # 已过期活动
     #
@@ -143,7 +144,6 @@ act_name_to_url = {
     "kol勇士召回": "https://dnf.qq.com/cp/a20260611token/page.html",
     "colg其他活动": "https://hub.bbs.colg.cn/activity/summer_celebration/2026/index.html",
     "WeGame活动": "https://dnf.qq.com/cp/a20260611wegame/index.html",
-    "DNF落地页活动_ide": "https://dnf.qq.com/cp/celebration/",
     "DNF周年庆登录活动": "https://dnf.qq.com/cp/a20260611gift/",
     "周年特别节目": "https://dnf.qq.com/cp/a20260530eighteen/",
     "像素拼图": "https://dnf.qq.com/cp/a20260320PixMap/",
@@ -346,7 +346,7 @@ class Urls:
         self.ide_iActivityId_dnf_social_relation_permission = "14_uK7KKe"  # DNF关系链接-用户授权接口
         self.ide_iActivityId_dnf_anniversary = "86_e5rV7O"  # DNF周年庆登录活动
         self.ide_iActivityId_dnf_game = "64_Yetu1m"  # dnf娱乐赛
-        self.ide_iActivityId_dnf_luodiye = "82_LNWXEn"  # DNF落地页
+        self.ide_iActivityId_dnf_luodiye = "31_zCvPp1"  # DNF落地页
         self.ide_iActivityId_dnf_luodiye_dup = "16_FDvprx"  # DNF落地页dup
         self.ide_iActivityId_dnf_comic = "64_p5cLkZ"  # DNF漫画预约活动
         self.ide_iActivityId_dnf_save_sailiyam = "35_w7UB7L"  # 拯救赛利亚
