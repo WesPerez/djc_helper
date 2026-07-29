@@ -690,6 +690,7 @@ class DjcHelper:
             ("回流引导秘籍", self.dnf_recall_guide),
             ("夏日礼包", self.dnf_summer_gift_act),
             ("DNF落地页活动_ide", self.dnf_luodiye_ide),
+            ("助手限定活动_3", self.dnf_helper_limit_act_3), # 逐浪夏日签到
         ]
 
     def expired_activities(self) -> list[tuple[str, Callable]]:
@@ -698,7 +699,6 @@ class DjcHelper:
         # undone: 当这个列表下方过期很久的活动变得很多的时候，就再将部分挪到上面这个墓地中
         return [
             ("DNF心悦wpe", self.dnf_xinyue_wpe),
-            ("助手限定活动_3", self.dnf_helper_limit_act_3), # 夏日破浪补给站
             ("井盖杯强者之路", self.dnf_jinggai_stronger),
             ("助手限定活动_2", self.dnf_helper_limit_act_2), # 海滩派对
             ("kol勇士召回", self.dnf_kol_recall),
@@ -9210,7 +9210,7 @@ class DjcHelper:
     #   8. 一个查找参数的示例
     #       搜索前缀 luckySignV2/ 找到累计奖励的接口
     #       其被混淆在 C = function() { 这个函数里，搜索得到调用者 n.d(t, "i", (function() {
-    #       这里的 "i" 是被封装的代号，搜索 ["i"]
+    #       这里的 "i" 是被封装的代号，搜索 ["i"])({ 或 ["i"]({
     #       在匹配到的中一个个观察，发现这个最像
     #           Object(u["i"])({
     #               rewardId: r.id
@@ -9510,11 +9510,11 @@ class DjcHelper:
 
             return res["taskConfig"]
 
-        def query_checkin_list() -> tuple[list[dict], list[dict]]:
+        def query_checkin_list() -> tuple[list[dict], list[dict], list[dict]]:
             raw_res = self.dnf_helper_limit_act_3_op("查询签到列表", "checkin/config", print_res=False)
             res = raw_res["data"]
 
-            return res["dailyCheckIns"], res["totalCheckIns"]
+            return res["dailyCheckIns"], res["totalCheckIns"], res["activeCheckIns"]["list"]
 
         def query_checkin_data() -> tuple[int, int]:
             raw_res = self.dnf_helper_limit_act_3_op("查询签到信息", "checkin/data", print_res=False)
@@ -9546,7 +9546,7 @@ class DjcHelper:
         total_days, recheckin_count = query_checkin_data()
         logger.info(f"当前已签到天数 {total_days}，可补签天数 {recheckin_count}")
 
-        dailyCheckIns, totalCheckIns = query_checkin_list()
+        dailyCheckIns, totalCheckIns, activeCheckIns = query_checkin_list()
 
         for check_info in dailyCheckIns:
             date = check_info["date"]
@@ -9583,20 +9583,40 @@ class DjcHelper:
                 recheckin_count -= 1
                 time.sleep(3)
 
-        dailyCheckIns, totalCheckIns = query_checkin_list()
+        dailyCheckIns, totalCheckIns, activeCheckIns = query_checkin_list()
         for reward_info in totalCheckIns:
-            day = reward_info["value"]
+            required_days = reward_info["value"]
             status = reward_info["status"]
 
             if status == 0:
-                logger.warning(f"累计登录 {day} 天尚未达成，跳过尝试后续天数")
+                logger.warning(f"累计登录 {required_days} 天尚未达成，跳过尝试后续天数")
                 break
             elif status == 1:
-                self.dnf_helper_limit_act_3_op(f"尝试领取累计登录 {day} 天奖励", "checkin/pickupTotalReward", value=day)
+                self.dnf_helper_limit_act_3_op(f"尝试领取累计登录 {required_days} 天奖励", "checkin/pickupTotalReward", value=required_days)
                 time.sleep(3)
             elif status == 2:
-                logger.warning(f"累计登录 {day} 天已领取，跳过")
+                logger.warning(f"累计登录 {required_days} 天已领取，跳过")
                 continue
+
+        dailyCheckIns, totalCheckIns, activeCheckIns = query_checkin_list()
+        for active_info in activeCheckIns:
+            id = active_info["id"]
+            name = active_info["cycleLabel"]
+            cycle_days = active_info["cycleDays"]
+            required_days = active_info["value"]
+            status = active_info["status"]
+
+            if status == 0:
+                logger.warning(f"{name} 需要签到 {cycle_days}/{required_days} 天尚未达成，跳过")
+            elif status == 1:
+                self.dnf_helper_limit_act_3_op(f"{name} 尝试领取签到 {required_days} 天奖励", "checkin/pickupActiveCheckInReward", id=id)
+                time.sleep(3)
+            elif status == 2:
+                logger.warning(f"{name} 签到 {required_days} 天已领取，跳过")
+            elif status == 3:
+                logger.warning(f"{name} 签到 {required_days} 天未完成，跳过")
+            elif status == 4:
+                logger.warning(f"{name} 签到 {required_days} 天未解锁，跳过")
 
         remainDrawTimes = query_lottery_count()
         logger.info(f"当前剩余抽奖 {remainDrawTimes} 次")
@@ -9607,7 +9627,7 @@ class DjcHelper:
     def dnf_helper_limit_act_3_op(self, ctx: str, action_name: str, print_res=True, **extra_params):
         # re: 每次新活动需要更新下面这俩参数
         # 活动id，对应参数 activityId
-        activityId = "10049"
+        activityId = "10057"
         # 活动的action前缀，对应参数 r 的前半部分
         activity_action_prefix = "activitytpl"
 
@@ -11832,6 +11852,6 @@ if __name__ == "__main__":
         djcHelper.get_bind_role_list()
 
         # djcHelper.dnf_kol()
-        djcHelper.dnf_luodiye_ide()
+        djcHelper.dnf_helper_limit_act_3()
 
     pause()
