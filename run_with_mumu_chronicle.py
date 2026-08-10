@@ -1,14 +1,19 @@
 import argparse
+import ctypes
 import struct
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
 import xml.etree.ElementTree as ET
 import zlib
 from pathlib import Path
+
+import psutil
 
 
 ROOT = Path(__file__).resolve().parent
@@ -20,6 +25,12 @@ SCREENSHOT_REMOTE_PATH = "/sdcard/djc_helper_chronicle_state.png"
 SCREENSHOT_LOCAL_PATH = ROOT / ".cached" / "mumu_chronicle_state.png"
 UI_DUMP_REMOTE_PATH = "/sdcard/djc_helper_window.xml"
 UI_DUMP_LOCAL_PATH = ROOT / ".cached" / "djc_helper_window.xml"
+RUN_STATUS_PATH = ROOT / ".cached" / "mumu_chronicle_last_run.json"
+SINGLE_INSTANCE_MUTEX_NAME = "Local\\djc_helper_mumu_chronicle_workflow"
+SESSION_LOG_PATH = (
+    ROOT / "logs" / f"mumu_chronicle_{time.strftime('%Y_%m_%d_%H_%M_%S')}.log"
+)
+SESSION_LOG_ENABLED = False
 TASK_ACTION_TEXTS = ("去完成", "领取", "已领取", "已全部领取")
 DAILY_SIGNIN_Y_FRACTIONS = (0.074, 0.188)
 TASK_VISUAL_ORDER = (
@@ -29,27 +40,94 @@ TASK_VISUAL_ORDER = (
     "进入圈子详细页",
 )
 TASK_ACTION_X_FRACTION = 0.675
+TASK_TITLE_PROFILE_MAX_DISTANCE = 1.0
+TASK_TITLE_PROFILES = {
+    "【周】查看地区排行榜": (0, 0, 0, 6, 10, 13, 14, 11, 9, 0, 10, 20, 12, 16, 16, 10, 13, 16, 12, 18, 12, 13, 15, 6, 7, 11, 10, 14, 9, 0, 0, 0),
+    "【周】分享助手周报": (0, 0, 0, 6, 10, 13, 16, 11, 9, 0, 9, 16, 11, 13, 16, 11, 14, 16, 9, 19, 10, 14, 15, 8, 11, 13, 5, 4, 0, 0, 0, 0),
+    "浏览1篇内容": (0, 0, 5, 9, 8, 12, 14, 2, 7, 16, 18, 13, 14, 12, 12, 16, 17, 7, 8, 5, 7, 1, 0, 0, 4, 4, 4, 0, 0, 0, 0, 0),
+    "进入圈子详细页": (0, 0, 6, 8, 9, 9, 9, 6, 11, 16, 10, 16, 11, 10, 16, 10, 18, 18, 13, 13, 13, 1, 0, 0, 4, 4, 4, 0, 0, 0, 0, 0),
+}
 
 
 def log(message):
-    print(f"[mumu-chronicle] {message}", flush=True)
+    line = f"[mumu-chronicle] {message}"
+    print(line, flush=True)
+    if not SESSION_LOG_ENABLED:
+        return
+    try:
+        SESSION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with SESSION_LOG_PATH.open("a", encoding="utf-8") as log_file:
+            log_file.write(f"{line}\n")
+    except OSError:
+        # Console output remains available even if the log directory is unwritable.
+        pass
+
+
+def acquire_single_instance_mutex(name=SINGLE_INSTANCE_MUTEX_NAME):
+    if os.name != "nt":
+        return None
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p)
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.ReleaseMutex.argtypes = (ctypes.c_void_p,)
+    kernel32.ReleaseMutex.restype = ctypes.c_bool
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    kernel32.CloseHandle.restype = ctypes.c_bool
+
+    ctypes.set_last_error(0)
+    handle = kernel32.CreateMutexW(None, True, name)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    if ctypes.get_last_error() == 183:
+        kernel32.CloseHandle(handle)
+        raise RuntimeError("已有 DNF助手完整流程正在运行，拒绝重复启动")
+    return kernel32, handle
+
+
+def release_single_instance_mutex(mutex):
+    if mutex is None:
+        return
+    kernel32, handle = mutex
+    kernel32.ReleaseMutex(handle)
+    kernel32.CloseHandle(handle)
 
 
 def run_command(args, timeout=60, check=True, cwd=None):
-    completed = subprocess.run(
-        args,
-        cwd=str(cwd or ROOT),
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=timeout,
-    )
-    if check and completed.returncode != 0:
+    # MuMu CLI can leave a descendant holding stdout open after the CLI itself
+    # exits. PIPE-based subprocess.run then waits forever for EOF on Windows.
+    # A temporary file lets us wait only for the command process and still keep
+    # its diagnostic output.
+    with tempfile.TemporaryFile() as output_file:
+        process = subprocess.Popen(
+            args,
+            cwd=str(cwd or ROOT),
+            stdout=output_file,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            returncode = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            output_file.seek(0)
+            output = output_file.read().decode("utf-8", errors="replace")
+            raise subprocess.TimeoutExpired(
+                args,
+                timeout,
+                output=output,
+            ) from exc
+
+        output_file.seek(0)
+        output = output_file.read().decode("utf-8", errors="replace")
+
+    if check and returncode != 0:
         joined = " ".join(str(arg) for arg in args)
-        raise RuntimeError(f"Command failed ({completed.returncode}): {joined}\n{completed.stdout}")
-    return completed.stdout
+        raise RuntimeError(f"Command failed ({returncode}): {joined}\n{output}")
+    return output
 
 
 def find_mumu_cli(explicit_path=None):
@@ -129,7 +207,7 @@ def adb_pull(cli, vmindex, remote_path, local_path, timeout=60, check=True):
     return adb(cli, vmindex, f"pull {remote_path} {local_path}", timeout=timeout, check=check)
 
 
-def app_info(cli, vmindex, package_name):
+def app_info(cli, vmindex, package_name, timeout=10):
     return mumu(
         cli,
         "control",
@@ -139,7 +217,7 @@ def app_info(cli, vmindex, package_name):
         "info",
         "--package",
         package_name,
-        timeout=30,
+        timeout=timeout,
         check=False,
     )
 
@@ -154,15 +232,24 @@ def parse_app_state(raw):
 
 
 def wait_for_app_running(cli, vmindex, package_name, timeout_seconds=15):
-    deadline = time.time() + timeout_seconds
+    deadline = time.monotonic() + timeout_seconds
     last_raw = ""
 
-    while time.time() < deadline:
-        last_raw = app_info(cli, vmindex, package_name)
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        try:
+            last_raw = app_info(
+                cli,
+                vmindex,
+                package_name,
+                timeout=max(1, min(5, remaining)),
+            )
+        except subprocess.TimeoutExpired:
+            last_raw = "<app info timed out>"
         if parse_app_state(last_raw) == "running":
             return True, last_raw
 
-        time.sleep(1)
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
 
     return False, last_raw
 
@@ -231,6 +318,7 @@ def force_stop_app(cli, vmindex, package_name):
 
 
 def launch_dnf_helper(cli, vmindex):
+    log("请求 MuMu 启动 DNF助手 App")
     output = mumu(
         cli,
         "control",
@@ -243,6 +331,7 @@ def launch_dnf_helper(cli, vmindex):
         timeout=30,
         check=False,
     )
+    log("MuMu 启动命令已返回，等待 DNF助手进入运行状态")
     running, state_raw = wait_for_app_running(cli, vmindex, DNF_HELPER_PACKAGE)
     if not running:
         raise RuntimeError(
@@ -250,6 +339,7 @@ def launch_dnf_helper(cli, vmindex):
             f"启动输出：{output.strip() or '<empty>'}；"
             f"应用状态：{state_raw.strip() or '<empty>'}"
         )
+    log("DNF助手 App 运行状态已确认")
 
 
 def run_am_start(cli, vmindex, component, extras):
@@ -291,23 +381,42 @@ def reset_to_home(cli, vmindex):
 
 def open_dnf_home_fresh(cli, vmindex):
     force_stop_app(cli, vmindex, DNF_HELPER_PACKAGE)
-    start_output = adb_shell(
-        cli,
-        vmindex,
-        f"am start -S -n {DNF_HELPER_PACKAGE}/{DNF_HELPER_WELCOME_ACTIVITY}",
-        timeout=30,
-        check=False,
-    )
-    running, _ = wait_for_app_running(cli, vmindex, DNF_HELPER_PACKAGE, timeout_seconds=8)
-    if not running:
-        log(
-            "直接启动 DNF助手 WelcomeActivity 后应用未运行，"
-            f"改用 MuMu app launch。原始输出：{start_output.strip() or '<empty>'}"
+    try:
+        start_output = adb_shell(
+            cli,
+            vmindex,
+            f"am start -S -n {DNF_HELPER_PACKAGE}/{DNF_HELPER_WELCOME_ACTIVITY}",
+            timeout=30,
+            check=False,
         )
-        launch_dnf_helper(cli, vmindex)
+        running, _ = wait_for_app_running(cli, vmindex, DNF_HELPER_PACKAGE, timeout_seconds=8)
+        if not running:
+            log(
+                "直接启动 DNF助手 WelcomeActivity 后应用未运行，"
+                f"改用 MuMu app launch。原始输出：{start_output.strip() or '<empty>'}"
+            )
+            launch_dnf_helper(cli, vmindex)
 
-    time.sleep(5)
-    dismiss_startup_update_dialog(cli, vmindex)
+        time.sleep(5)
+        dismiss_startup_update_dialog(cli, vmindex)
+    except Exception:
+        try:
+            running, _ = wait_for_app_running(
+                cli,
+                vmindex,
+                DNF_HELPER_PACKAGE,
+                timeout_seconds=3,
+            )
+        except Exception as state_error:
+            log(f"检查 DNF助手恢复状态失败：{state_error}")
+            running = False
+        if not running:
+            log("DNF助手冷启动失败，最后尝试恢复应用到运行状态")
+            try:
+                launch_dnf_helper(cli, vmindex)
+            except Exception as recovery_error:
+                log(f"恢复 DNF助手运行状态失败：{recovery_error}")
+        raise
 
 
 def tap_dnf_home_tab(cli, vmindex, width, height):
@@ -322,20 +431,33 @@ def capture_screen(cli, vmindex):
     return SCREENSHOT_LOCAL_PATH
 
 
-def dump_ui(cli, vmindex, attempts=3):
+def dump_ui(cli, vmindex, attempts=3, command_timeout=30):
     UI_DUMP_LOCAL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     for attempt in range(1, attempts + 1):
         UI_DUMP_LOCAL_PATH.unlink(missing_ok=True)
-        output = adb_shell(
-            cli,
-            vmindex,
-            f"uiautomator dump --compressed {UI_DUMP_REMOTE_PATH}",
-            timeout=30,
-            check=False,
-        )
+        try:
+            output = adb_shell(
+                cli,
+                vmindex,
+                f"uiautomator dump --compressed {UI_DUMP_REMOTE_PATH}",
+                timeout=command_timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            output = f"uiautomator dump timed out after {command_timeout}s"
         if "dumped to" in output:
-            adb_pull(cli, vmindex, UI_DUMP_REMOTE_PATH, UI_DUMP_LOCAL_PATH, timeout=20, check=False)
+            try:
+                adb_pull(
+                    cli,
+                    vmindex,
+                    UI_DUMP_REMOTE_PATH,
+                    UI_DUMP_LOCAL_PATH,
+                    timeout=20,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                output = f"{output.strip()}; adb pull timed out after 20s"
 
         if UI_DUMP_LOCAL_PATH.exists():
             try:
@@ -354,26 +476,80 @@ def has_exact_ui_text(root, text):
     return any(node.get("text") == text for node in root.iter())
 
 
+def looks_like_update_dialog_pixels(image_width, image_height, channels, rows):
+    center_total = center_light = center_blue = 0
+    for y in range(int(image_height * 0.39), int(image_height * 0.61)):
+        row = rows[y]
+        for x in range(int(image_width * 0.27), int(image_width * 0.73)):
+            index = x * channels
+            red, green, blue = row[index], row[index + 1], row[index + 2]
+            center_total += 1
+            if red > 220 and green > 220 and blue > 220:
+                center_light += 1
+            if red < 80 and 110 < green < 230 and blue > 150 and blue > green:
+                center_blue += 1
+
+    outer_total = outer_dim = 0
+    outer_ranges = ((0.05, 0.35), (0.68, 0.95))
+    for start_fraction, end_fraction in outer_ranges:
+        for y in range(int(image_height * start_fraction), int(image_height * end_fraction)):
+            row = rows[y]
+            for x in range(int(image_width * 0.02), int(image_width * 0.98)):
+                index = x * channels
+                red, green, blue = row[index], row[index + 1], row[index + 2]
+                outer_total += 1
+                if (red + green + blue) / 3 < 200:
+                    outer_dim += 1
+
+    if not center_total or not outer_total:
+        return False
+    return (
+        center_light / center_total > 0.65
+        and center_blue / center_total > 0.001
+        and outer_dim / outer_total > 0.60
+    )
+
+
+def screenshot_has_update_dialog(cli, vmindex):
+    image_path = capture_screen(cli, vmindex)
+    image_width, image_height, channels, rows = read_png_rgb(image_path)
+    return looks_like_update_dialog_pixels(image_width, image_height, channels, rows)
+
+
 def dismiss_startup_update_dialog(cli, vmindex):
     try:
-        root = dump_ui(cli, vmindex)
+        root = dump_ui(cli, vmindex, attempts=2, command_timeout=10)
     except RuntimeError as exc:
-        raise RuntimeError(
-            "无法确认 DNF助手是否显示版本更新提示，为避免误触升级已停止 App 自动操作"
-        ) from exc
+        log(f"暂时无法读取 DNF助手页面结构，改用截图检查版本更新提示：{exc}")
+        try:
+            update_visible = screenshot_has_update_dialog(cli, vmindex)
+        except Exception as screenshot_error:
+            raise RuntimeError(
+                "页面结构与截图均无法确认 DNF助手版本更新提示，已停止 App 自动操作"
+            ) from screenshot_error
+    else:
+        update_visible = has_exact_ui_text(root, "版本更新")
 
-    if not has_exact_ui_text(root, "版本更新"):
+    if not update_visible:
         return False
 
     log("检测到 DNF助手版本更新提示，使用 Android 返回键取消，避免误触应用升级")
     back(cli, vmindex, count=1, delay=2)
 
     try:
-        root = dump_ui(cli, vmindex)
+        root = dump_ui(cli, vmindex, attempts=2, command_timeout=10)
     except RuntimeError as exc:
-        raise RuntimeError("关闭版本更新提示后无法确认页面状态，已停止 App 自动操作") from exc
+        log(f"关闭提示后页面结构仍不可读，改用截图复核：{exc}")
+        try:
+            update_still_visible = screenshot_has_update_dialog(cli, vmindex)
+        except Exception as screenshot_error:
+            raise RuntimeError(
+                "关闭版本更新提示后，页面结构与截图均无法复核，已停止 App 自动操作"
+            ) from screenshot_error
+    else:
+        update_still_visible = has_exact_ui_text(root, "版本更新")
 
-    if has_exact_ui_text(root, "版本更新"):
+    if update_still_visible:
         raise RuntimeError("DNF助手版本更新提示无法关闭，为避免误触升级已停止 App 自动操作")
 
     return True
@@ -461,7 +637,18 @@ def open_and_locate_task(cli, vmindex, width, height, task_name):
     # MuMu occasionally exposes only the top 1080 px of a 1080x1920 WebView to
     # uiautomator. Try the current viewport first, then use screenshot-based
     # recognition for the stable task rows before attempting any blind scrolls.
-    action_text, center = locate_task_action(cli, vmindex, width, height, task_name, max_scrolls=0)
+    try:
+        action_text, center = locate_task_action(
+            cli,
+            vmindex,
+            width,
+            height,
+            task_name,
+            max_scrolls=0,
+        )
+    except RuntimeError as exc:
+        log(f"uiautomator 无法读取任务页，改用截图识别：{exc}")
+        action_text, center = None, None
     if action_text:
         return action_text, center
 
@@ -470,7 +657,11 @@ def open_and_locate_task(cli, vmindex, width, height, task_name):
         log(f"通过截图识别 {task_name} 按钮状态：{action_text}")
         return action_text, center
 
-    return locate_task_action(cli, vmindex, width, height, task_name)
+    try:
+        return locate_task_action(cli, vmindex, width, height, task_name)
+    except RuntimeError as exc:
+        log(f"任务页结构与截图均未能定位 {task_name}：{exc}")
+        return None, None
 
 
 def locate_task_action_visually(cli, vmindex, width, height, task_name):
@@ -478,20 +669,14 @@ def locate_task_action_visually(cli, vmindex, width, height, task_name):
         return None, None
 
     try:
-        image_path = capture_screen(cli, vmindex)
-        image_width, image_height, channels, rows = read_png_rgb(image_path)
+        task_states = capture_visual_task_states(cli, vmindex)
     except Exception as exc:
         log(f"截图识别任务行失败，将按未知状态处理：{exc}")
         return None, None
 
-    task_rows = find_task_row_y_fractions(image_width, image_height, channels, rows)
-    task_index = TASK_VISUAL_ORDER.index(task_name)
-    if len(task_rows) <= task_index:
-        log(f"截图仅识别到 {len(task_rows)} 个连续任务卡片，无法定位 {task_name}")
-        return None, None
-
-    y_fraction = task_rows[task_index]
-    state = classify_task_button_pixels(image_width, image_height, channels, rows, y_fraction)
+    state_info = task_states[task_name]
+    y_fraction = state_info["y_fraction"]
+    state = state_info["state"]
     action_text = {
         "todo": "去完成",
         "claim": "领取",
@@ -508,6 +693,109 @@ def locate_task_action_visually(cli, vmindex, width, height, task_name):
         int(width * TASK_ACTION_X_FRACTION),
         int(height * y_fraction),
     )
+
+
+def capture_visual_task_states(cli, vmindex):
+    image_path = capture_screen(cli, vmindex)
+    image_width, image_height, channels, rows = read_png_rgb(image_path)
+    task_rows = find_task_row_y_fractions(image_width, image_height, channels, rows)
+    if len(task_rows) < len(TASK_VISUAL_ORDER):
+        raise RuntimeError(
+            f"截图仅识别到 {len(task_rows)} 个连续任务卡片，"
+            f"预期至少 {len(TASK_VISUAL_ORDER)} 个"
+        )
+
+    observed_profiles = {
+        task_name: compute_task_title_profile(
+            image_width,
+            image_height,
+            channels,
+            rows,
+            task_rows[index],
+        )
+        for index, task_name in enumerate(TASK_VISUAL_ORDER)
+    }
+    validate_task_title_profiles(observed_profiles)
+
+    return {
+        task_name: {
+            "state": classify_task_button_pixels(
+                image_width,
+                image_height,
+                channels,
+                rows,
+                task_rows[index],
+            ),
+            "y_fraction": task_rows[index],
+        }
+        for index, task_name in enumerate(TASK_VISUAL_ORDER)
+    }
+
+
+def compute_task_title_profile(image_width, image_height, channels, rows, y_fraction):
+    x1 = int(image_width * 0.08)
+    x2 = int(image_width * 0.52)
+    y1 = int(image_height * (y_fraction - 0.035))
+    y2 = int(image_height * (y_fraction + 0.035))
+    profile = []
+
+    for column in range(32):
+        column_start = x1 + (x2 - x1) * column // 32
+        column_end = x1 + (x2 - x1) * (column + 1) // 32
+        dark = total = 0
+        for y in range(max(0, y1), min(image_height, y2)):
+            row = rows[y]
+            for x in range(max(0, column_start), min(image_width, column_end)):
+                index = x * channels
+                red, green, blue = row[index], row[index + 1], row[index + 2]
+                total += 1
+                if red < 100 and green < 100 and blue < 100:
+                    dark += 1
+        profile.append(round(100 * dark / total) if total else 0)
+
+    return tuple(profile)
+
+
+def validate_task_title_profiles(observed_profiles):
+    mismatches = []
+    for task_name, expected in TASK_TITLE_PROFILES.items():
+        observed = observed_profiles.get(task_name)
+        if observed is None or len(observed) != len(expected):
+            mismatches.append(f"{task_name}=missing")
+            continue
+        distance = sum(abs(actual - target) for actual, target in zip(observed, expected)) / len(expected)
+        if distance > TASK_TITLE_PROFILE_MAX_DISTANCE:
+            mismatches.append(f"{task_name}=distance:{distance:.2f}")
+
+    if mismatches:
+        raise RuntimeError(
+            "截图中的任务标题与已验证的编年史任务页不一致："
+            + ", ".join(mismatches)
+        )
+
+
+def verify_chronicle_tasks_completed(cli, vmindex):
+    log("复核四项 DNF助手 App 行为任务是否均已领取")
+    first = capture_visual_task_states(cli, vmindex)
+    time.sleep(1)
+    second = capture_visual_task_states(cli, vmindex)
+
+    incomplete = {}
+    for task_name in TASK_VISUAL_ORDER:
+        states = (first[task_name]["state"], second[task_name]["state"])
+        if states != ("done", "done"):
+            incomplete[task_name] = states
+
+    if incomplete:
+        details = ", ".join(
+            f"{task_name}={states[0]}/{states[1]}"
+            for task_name, states in incomplete.items()
+        )
+        log(f"四项任务未能连续两次确认已领取：{details}")
+        return False
+
+    log("已连续两次确认四项 DNF助手 App 行为任务均为已领取")
+    return True
 
 
 def claim_task_if_ready(cli, vmindex, width, height, task_name):
@@ -727,8 +1015,7 @@ def find_visible_claim_buttons(cli, vmindex):
         image_path = capture_screen(cli, vmindex)
         image_width, image_height, channels, rows = read_png_rgb(image_path)
     except Exception as exc:
-        log(f"截图扫描领取按钮失败：{exc}")
-        return []
+        raise RuntimeError(f"截图扫描领取按钮失败：{exc}") from exc
 
     x1 = int(image_width * 0.48)
     x2 = int(image_width * 0.72)
@@ -790,8 +1077,10 @@ def claim_all_visible_chronicle_rewards(cli, vmindex, width, height, max_claims=
         y_fraction = claim_buttons[0]
         position_key = round(y_fraction, 3)
         if position_key in attempted_positions:
-            log(f"当前页同一位置 y={y_fraction:.3f} 仍被识别为可领取，停止当前页扫描以避免重复误点")
-            break
+            raise RuntimeError(
+                f"当前页同一位置 y={y_fraction:.3f} 仍被识别为可领取，"
+                "无法确认奖励已领取"
+            )
 
         attempted_positions.add(position_key)
         log(f"领取当前页可见奖励：y={y_fraction:.3f}")
@@ -832,6 +1121,47 @@ def claim_all_chronicle_rewards(cli, vmindex, width, height, max_pages=6):
 
     log(f"编年史任务页奖励扫描完成，本次领取 {total_claimed} 个")
     return total_claimed
+
+
+def verify_no_claimable_chronicle_rewards(cli, vmindex, width, height, max_pages=6):
+    log("复核编年史任务页是否仍有可领取奖励")
+
+    for page in range(max_pages):
+        claim_buttons = find_visible_claim_buttons(cli, vmindex)
+        if claim_buttons:
+            log(
+                f"第 {page + 1} 页仍检测到 {len(claim_buttons)} 个可领取按钮，"
+                "不会关闭 DNF助手"
+            )
+            return False
+
+        if page == max_pages - 1:
+            break
+
+        swipe_fraction(cli, vmindex, width, height, 0.5, 0.86, 0.5, 0.50, 500)
+        time.sleep(1.5)
+
+    log("已确认编年史任务页没有待领取奖励")
+    return True
+
+
+def stop_dnf_helper_app(cli, vmindex, timeout_seconds=15):
+    log("全部奖励已确认领取，关闭 MuMu 中的 DNF助手 App")
+    force_stop_app(cli, vmindex, DNF_HELPER_PACKAGE)
+    deadline = time.time() + timeout_seconds
+    last_raw = ""
+
+    while time.time() < deadline:
+        last_raw = app_info(cli, vmindex, DNF_HELPER_PACKAGE)
+        if parse_app_state(last_raw) == "stopped":
+            log("DNF助手 App 已关闭，MuMu 模拟器保持运行")
+            return
+        time.sleep(1)
+
+    raise RuntimeError(
+        "DNF助手 App 未能确认关闭，"
+        f"应用状态：{last_raw.strip() or '<empty>'}"
+    )
 
 
 def open_chronicle_task_list(cli, vmindex, width, height, launch_first=True):
@@ -1030,7 +1360,16 @@ def enter_weekly_topic(cli, vmindex, width, height):
     back(cli, vmindex, count=2, delay=1.5)
 
 
+def run_chronicle_task_safely(task_name, task, cli, vmindex, width, height):
+    try:
+        return task(cli, vmindex, width, height)
+    except Exception as exc:
+        log(f"执行 {task_name} 时失败，将继续后续任务：{exc}")
+        return False
+
+
 def run_chronicle_app_tasks(cli, vmindex, include_weekly_topic=False):
+    log("开始执行 DNF助手 App 行为任务")
     width, height = query_screen_size(cli, vmindex)
 
     tasks = (
@@ -1042,14 +1381,28 @@ def run_chronicle_app_tasks(cli, vmindex, include_weekly_topic=False):
     failed_tasks = []
 
     for task_name, task in tasks:
-        if not task(cli, vmindex, width, height):
+        if not run_chronicle_task_safely(
+            task_name,
+            task,
+            cli,
+            vmindex,
+            width,
+            height,
+        ):
             failed_tasks.append(task_name)
 
     if failed_tasks:
         log(f"首次执行后未确认完成，将重试：{', '.join(failed_tasks)}")
         retry_failed_tasks = []
         for task_name, task in tasks:
-            if task_name in failed_tasks and not task(cli, vmindex, width, height):
+            if task_name in failed_tasks and not run_chronicle_task_safely(
+                task_name,
+                task,
+                cli,
+                vmindex,
+                width,
+                height,
+            ):
                 retry_failed_tasks.append(task_name)
         failed_tasks = retry_failed_tasks
 
@@ -1066,10 +1419,43 @@ def run_chronicle_app_tasks(cli, vmindex, include_weekly_topic=False):
     if failed_tasks:
         raise RuntimeError(f"DNF助手 App 任务未完成：{', '.join(failed_tasks)}")
 
+    open_chronicle_task_list(cli, vmindex, width, height)
+    if not verify_chronicle_tasks_completed(cli, vmindex):
+        raise RuntimeError("DNF助手 App 四项行为任务未能确认全部完成")
+
+    if not verify_no_claimable_chronicle_rewards(cli, vmindex, width, height):
+        raise RuntimeError("DNF助手 App 仍有待领取奖励")
+
+    stop_dnf_helper_app(cli, vmindex)
     log("DNF助手 App 行为任务已执行完毕")
 
 
-def run_djc_helper():
+def run_chronicle_app_stage(
+    cli,
+    vmindex,
+    startup_timeout,
+    include_weekly_topic=False,
+    attempts=2,
+):
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            log(f"开始 DNF助手 App 阶段（第 {attempt}/{attempts} 次）")
+            ensure_mumu_started(cli, vmindex, startup_timeout)
+            require_dnf_helper_installed(cli, vmindex)
+            run_chronicle_app_tasks(cli, vmindex, include_weekly_topic)
+            return
+        except Exception as exc:
+            last_error = exc
+            log(f"DNF助手 App 阶段第 {attempt}/{attempts} 次失败：{exc}")
+            if attempt < attempts:
+                log("等待 5 秒后从 MuMu/App 就绪检查重新执行完整阶段")
+                time.sleep(5)
+
+    raise RuntimeError(f"DNF助手 App 阶段连续 {attempts} 次失败：{last_error}")
+
+
+def run_djc_helper(timeout_seconds=2700):
     python_exe = ROOT / ".venv" / "Scripts" / "python.exe"
     if not python_exe.exists():
         python_exe = Path(sys.executable)
@@ -1082,11 +1468,49 @@ def run_djc_helper():
         pause_flag.write_text("created by run_with_mumu_chronicle.py\n", encoding="utf-8")
         created_pause_flag = True
 
+    process = subprocess.Popen(
+        [str(python_exe), "main.py", "--no_max_console"],
+        cwd=str(ROOT),
+    )
     try:
-        return subprocess.call([str(python_exe), "main.py", "--no_max_console"], cwd=str(ROOT))
+        return process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            root_process = psutil.Process(process.pid)
+            descendants = root_process.children(recursive=True)
+            for child in descendants:
+                child.terminate()
+            root_process.terminate()
+            _, alive = psutil.wait_procs([*descendants, root_process], timeout=5)
+            for remaining in alive:
+                remaining.kill()
+        except psutil.Error:
+            process.kill()
+        raise TimeoutError(
+            f"djc_helper 主流程运行超过 {timeout_seconds} 秒，已停止本次所属进程树"
+        ) from exc
     finally:
         if created_pause_flag and pause_flag.exists():
             pause_flag.unlink()
+
+
+def write_run_status(status):
+    RUN_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = RUN_STATUS_PATH.with_suffix(".json.tmp")
+    temporary_path.write_text(
+        json.dumps(status, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temporary_path.replace(RUN_STATUS_PATH)
+
+
+def finalize_run_status(status, exit_code, error=None):
+    status["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    status["success"] = exit_code == 0
+    status["exit_code"] = exit_code
+    if error and not status.get("error"):
+        status["error"] = error
+    write_run_status(status)
 
 
 def parse_args():
@@ -1094,37 +1518,110 @@ def parse_args():
     parser.add_argument("--vmindex", default="0", help="MuMu instance index, default: 0")
     parser.add_argument("--mumu-cli", default=None, help="Path to mumu-cli.exe")
     parser.add_argument("--startup-timeout", type=int, default=180, help="Seconds to wait for Android startup")
+    parser.add_argument("--helper-timeout", type=int, default=2700, help="Seconds allowed for djc_helper main.py")
     parser.add_argument("--skip-app-tasks", action="store_true", help="Only run djc_helper")
     parser.add_argument("--skip-djc-helper", action="store_true", help="Only run MuMu/DNF Assistant app tasks")
     parser.add_argument("--include-weekly-topic", action="store_true", help="Also run the weekly topic detail task")
     return parser.parse_args()
 
 
-def main():
-    args = parse_args()
+def run_workflow(args):
     app_task_error = None
+    status = {
+        "run_id": uuid.uuid4().hex,
+        "pid": os.getpid(),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "completed_at": None,
+        "app_tasks": "pending",
+        "djc_helper": "pending",
+        "success": None,
+        "exit_code": None,
+        "error": None,
+        "session_log": str(SESSION_LOG_PATH.relative_to(ROOT)),
+    }
+    write_run_status(status)
 
-    if not args.skip_app_tasks:
-        try:
-            cli = find_mumu_cli(args.mumu_cli)
-            log(f"使用 MuMu CLI：{cli}")
-            ensure_mumu_started(cli, args.vmindex, args.startup_timeout)
-            require_dnf_helper_installed(cli, args.vmindex)
-            run_chronicle_app_tasks(cli, args.vmindex, args.include_weekly_topic)
-        except Exception as exc:
-            app_task_error = exc
-            log(f"MuMu/DNF助手 App 阶段失败：{exc}")
+    try:
+        if not args.skip_app_tasks:
+            try:
+                cli = find_mumu_cli(args.mumu_cli)
+                log(f"使用 MuMu CLI：{cli}")
+                run_chronicle_app_stage(
+                    cli,
+                    args.vmindex,
+                    args.startup_timeout,
+                    args.include_weekly_topic,
+                )
+                status["app_tasks"] = "succeeded"
+            except Exception as exc:
+                app_task_error = exc
+                status["app_tasks"] = "failed"
+                status["error"] = f"MuMu/DNF助手 App 阶段失败：{exc}"
+                log(f"MuMu/DNF助手 App 阶段失败：{exc}")
+        else:
+            status["app_tasks"] = "skipped"
+            log("跳过 MuMu/DNF助手 App 行为任务")
+        write_run_status(status)
+
+        if not args.skip_djc_helper:
+            try:
+                helper_exit_code = run_djc_helper(args.helper_timeout)
+            except Exception as exc:
+                helper_exit_code = 1
+                status["djc_helper"] = "failed"
+                status["error"] = status["error"] or f"djc_helper 启动失败：{exc}"
+                log(f"djc_helper 阶段失败：{exc}")
+            else:
+                status["djc_helper"] = "succeeded" if helper_exit_code == 0 else "failed"
+                if helper_exit_code != 0 and not status["error"]:
+                    status["error"] = f"djc_helper 返回退出码 {helper_exit_code}"
+        else:
+            helper_exit_code = 0
+            status["djc_helper"] = "skipped"
+            log("跳过 djc_helper")
+    except KeyboardInterrupt:
+        finalize_run_status(status, 130, "等待或执行流程时收到中断信号")
+        raise
+    except Exception as exc:
+        finalize_run_status(status, 1, f"完整流程发生未处理异常：{exc}")
+        raise
+
+    exit_code = helper_exit_code or (1 if app_task_error else 0)
+    finalize_run_status(status, exit_code)
+
+    if exit_code == 0:
+        completed_stages = [
+            name
+            for name, state in (
+                ("App 行为任务", status["app_tasks"]),
+                ("djc_helper", status["djc_helper"]),
+            )
+            if state == "succeeded"
+        ]
+        log(f"完整流程验证成功：{'、'.join(completed_stages)}已完成")
     else:
-        log("跳过 MuMu/DNF助手 App 行为任务")
+        log(f"完整流程未通过，退出码={exit_code}，详情见状态文件 {RUN_STATUS_PATH}")
+    return exit_code
 
-    if not args.skip_djc_helper:
-        helper_exit_code = run_djc_helper()
-        if helper_exit_code != 0:
-            return helper_exit_code
-    else:
-        log("跳过 djc_helper")
 
-    return 1 if app_task_error else 0
+def main():
+    global SESSION_LOG_ENABLED
+    SESSION_LOG_ENABLED = True
+    args = parse_args()
+
+    try:
+        mutex = acquire_single_instance_mutex()
+    except RuntimeError as exc:
+        log(str(exc))
+        return 2
+
+    try:
+        return run_workflow(args)
+    except KeyboardInterrupt:
+        log("收到中断信号，已退出完整流程")
+        return 130
+    finally:
+        release_single_instance_mutex(mutex)
 
 
 if __name__ == "__main__":
