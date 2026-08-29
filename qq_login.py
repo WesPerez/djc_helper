@@ -190,6 +190,10 @@ class QQLogin:
     chrome_major_version = 107
     chrome_driver_version = "107.0.5304.62"
 
+    # QQ 快捷登录页面通过这两个域名访问 QQ 客户端提供的本地服务。
+    # 它们必须直连，否则系统代理可能会把本地登录请求转发到远端出口。
+    chrome_proxy_bypass_list = "localhost.ptlogin2.qq.com;localhost.sec.qq.com"
+
     default_window_width = 390
     default_window_height = 360
 
@@ -328,6 +332,11 @@ class QQLogin:
         options.add_argument(f"window-position={self.window_position_x},{self.window_position_y}")
         options.add_argument(f"window-size={self.default_window_width},{self.default_window_height}")
         options.add_argument(f"app={login_url}")
+        # Chrome 不读取 Python 的 no_proxy 环境变量；保持浏览器行为与公共配置一致。
+        if self.cfg.bypass_proxy:
+            options.add_argument("--proxy-server=direct://")
+        else:
+            options.add_argument(f"--proxy-bypass-list={self.chrome_proxy_bypass_list}")
         # 设置静音
         options.add_argument("--mute-audio")
 
