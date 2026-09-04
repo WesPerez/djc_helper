@@ -813,9 +813,10 @@ def show_pay_info(cfg):
 @try_except()
 def show_activity_info(cfg: Config):
     logger.info("")
-    _show_head_line("部分活动信息")
-    logger.warning("如果一直卡在这一步，请在小助手目录下创建一个空文件：不查询活动.txt")
-    Urls().show_current_valid_act_infos()
+
+    # _show_head_line("部分活动信息")
+    # logger.warning("如果一直卡在这一步，请在小助手目录下创建一个空文件：不查询活动.txt")
+    # Urls().show_current_valid_act_infos()
 
     user_buy_info = get_user_buy_info(cfg.get_qq_accounts(), show_dlc_info=False)
     show_activities_summary(cfg, user_buy_info)
@@ -1506,24 +1507,28 @@ def show_tips(cfg: Config):
             "也就是说，小助手不会帮你*完成*上述任务的条件，只会在你完成条件的前提下，替你去领取任务奖励\n"
             "此外，如果想要自动领取等级奖励，请把配置工具中助手相关的所有配置项都填上\n"
         ),
-        "26.1 云游戏": (
-            "云游戏有个云游戏会员活动，可以领取一些蚊子腿，请自行参与\n"
-            "https://my.start.qq.com/act/my_activity_v2/?ADTAG=dnfviphd2&group_id=1&act_id=174&ts=2025080111#/index\n"
-        ),
-        "26.6 微信游戏圈抽奖": (
-            "微信游戏圈有个抽奖活动，微信扫描下面这个网页中的二维码，请自行参与\n"
-            "https://game.gtimg.cn/images/dnf/cp/celebration/pc2/act-fc-pic1.png"
-        ),
-        "26.6 微信游戏圈签到": (
-            "微信游戏圈有个签到活动，微信扫描下面这个网页中的二维码，请自行参与\n"
-            "https://game.gtimg.cn/images/dnf/cp/celebration/pc2/act-fc-pic2.png"
-        ),
-        "26.6 网吧": (
-            "有个在网吧内登录可以完成的网页活动，请自行参与\n"
-            "https://act1.hdnf.qq.com/a20260611netbar/pcbanner.html\n"
-        ),
-        "26.6 抖音": (
-            "抖音搜索dnf，找到dnf端游官方账号，点进用户主页点最右边的【专区】tab，在精选活动中选择第二个限定福利免费领活动，在里面可以领取一个队伍边框，以及下面可快速完成的前五个任务来获得五次抽奖机会，可领取黑钻疲劳药等奖励，请自行参与\n"
+        # "26.1 云游戏": (
+        #     "云游戏有个云游戏会员活动，可以领取一些蚊子腿，请自行参与\n"
+        #     "https://my.start.qq.com/act/my_activity_v2/?ADTAG=dnfviphd2&group_id=1&act_id=174&ts=2025080111#/index\n"
+        # ),
+        # "26.6 微信游戏圈抽奖": (
+        #     "微信游戏圈有个抽奖活动，微信扫描下面这个网页中的二维码，请自行参与\n"
+        #     "https://game.gtimg.cn/images/dnf/cp/celebration/pc2/act-fc-pic1.png"
+        # ),
+        # "26.6 微信游戏圈签到": (
+        #     "微信游戏圈有个签到活动，微信扫描下面这个网页中的二维码，请自行参与\n"
+        #     "https://game.gtimg.cn/images/dnf/cp/celebration/pc2/act-fc-pic2.png"
+        # ),
+        # "26.6 网吧": (
+        #     "有个在网吧内登录可以完成的网页活动，请自行参与\n"
+        #     "https://act1.hdnf.qq.com/a20260611netbar/pcbanner.html\n"
+        # ),
+        # "26.6 抖音": (
+        #     "抖音搜索dnf，找到dnf端游官方账号，点进用户主页点最右边的【专区】tab，在精选活动中选择第二个限定福利免费领活动，在里面可以领取一个队伍边框，以及下面可快速完成的前五个任务来获得五次抽奖机会，可领取黑钻疲劳药等奖励，请自行参与\n"
+        # ),
+        "心悦维护": (
+            "由于最近一两周心悦一直在维护，导致所有人这段时间都没法全勤完成每周的三次运镖任务，导致无法满足小助手在线匹配的前置条件（前两周全勤领取了6次运镖奖励）\n"
+            "所以接下来两周请各位记得自行去小助手群、colg招募区等地方，与其他人手动组队下，度过这两周的缓冲期~等全勤两周后续就能自动匹配了\n"
         ),
     }
 
@@ -2418,11 +2423,12 @@ if __name__ == "__main__":
     freeze_support()
 
     # demo_show_notices()
-    # demo_show_activities_summary()
 
     # demo_show_tips()
     # demo_try_auto_update_ignore_permission_on_special_case()
     # show_following_regular_activity_expected_info()
 
     # demo_main()
+
+    # demo_show_activities_summary()
     demo_pay_info()

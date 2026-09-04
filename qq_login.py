@@ -1402,14 +1402,14 @@ class QQLogin:
 
             self.set_window_size()
 
-            logger.info("等待#loginframe加载完毕")
+            logger.info("等待.qcwx-frame-qc加载完毕")
             WebDriverWait(self.driver, self.cfg.login.load_login_iframe_timeout).until(
-                expected_conditions.visibility_of_element_located((By.CLASS_NAME, "loginframe"))
+                expected_conditions.visibility_of_element_located((By.CLASS_NAME, "qcwx-frame-qc"))
             )
-            login_frame = self.driver.find_element(By.CLASS_NAME, "loginframe")
+            login_frame = self.driver.find_element(By.CLASS_NAME, "qcwx-frame-qc")
             self.driver.switch_to.frame(login_frame)
 
-            logger.info("等待#loginframe#ptlogin_iframe加载完毕并切换")
+            logger.info("等待.qcwx-frame-qc#ptlogin_iframe加载完毕并切换")
             WebDriverWait(self.driver, self.cfg.login.load_login_iframe_timeout).until(
                 expected_conditions.visibility_of_element_located((By.ID, "ptlogin_iframe"))
             )
