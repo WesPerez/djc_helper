@@ -2418,11 +2418,12 @@ if __name__ == "__main__":
     freeze_support()
 
     # demo_show_notices()
-    # demo_show_activities_summary()
 
     # demo_show_tips()
     # demo_try_auto_update_ignore_permission_on_special_case()
     # show_following_regular_activity_expected_info()
 
     # demo_main()
+
+    # demo_show_activities_summary()
     demo_pay_info()
