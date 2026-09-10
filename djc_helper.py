@@ -688,6 +688,9 @@ class DjcHelper:
             ("DNF助手编年史", self.dnf_helper_chronicle),
             ("绑定手机活动", self.dnf_bind_phone),
             ("回流引导秘籍", self.dnf_recall_guide),
+            ("DNF落地页活动_ide", self.dnf_luodiye_ide),
+            ("WeGame活动", self.dnf_wegame),
+            ("DNF心悦wpe", self.dnf_xinyue_wpe),
         ]
 
     def expired_activities(self) -> list[tuple[str, Callable]]:
@@ -696,14 +699,11 @@ class DjcHelper:
         # undone: 当这个列表下方过期很久的活动变得很多的时候，就再将部分挪到上面这个墓地中
         return [
             ("助手限定活动_3", self.dnf_helper_limit_act_3), # 逐浪夏日签到
-            ("DNF落地页活动_ide", self.dnf_luodiye_ide),
             ("夏日礼包", self.dnf_summer_gift_act),
-            ("DNF心悦wpe", self.dnf_xinyue_wpe),
             ("井盖杯强者之路", self.dnf_jinggai_stronger),
             ("助手限定活动_2", self.dnf_helper_limit_act_2), # 海滩派对
             ("kol勇士召回", self.dnf_kol_recall),
             ("colg其他活动", self.colg_other_act),
-            ("WeGame活动", self.dnf_wegame),
             ("DNF周年庆登录活动", self.dnf_anniversary),
             ("周年特别节目", self.dnf_anniversary_special_act),
             ("像素拼图", self.dnf_pixel_puzzle),
@@ -6594,7 +6594,7 @@ class DjcHelper:
         self.check_dnf_luodiye_ide()
 
         def query_info() -> tuple[int, int, int]:
-            res = self.dnf_luodiye_ide_op("初始化", "581987", print_res=False)
+            res = self.dnf_luodiye_ide_op("初始化", "611890", print_res=False)
             raw_info = res["jData"]
 
             # 抽奖次数
@@ -6610,7 +6610,7 @@ class DjcHelper:
             # jLotteryTotal = 0
 
             # jFinishedLotteryCount = jLotteryTotal - iLottery
-            jFinishedLotteryCount = iLoginTotal
+            jFinishedLotteryCount = jLotteryTotal
 
             return iLottery, iLoginTotal, jFinishedLotteryCount
 
@@ -6650,15 +6650,15 @@ class DjcHelper:
         # try_daily_signin()
         # # self.dnf_luodiye_ide_op("每日签到", "441321")
 
-        self.dnf_luodiye_ide_op("见面礼包", "581991")
+        self.dnf_luodiye_ide_op("见面礼包", "611894")
 
         # 打卡前等一会，确保不会因频率过快被拦截？
         time.sleep(5)
-        self.dnf_luodiye_ide_op("通关深渊最终调律者", "582074")
+        self.dnf_luodiye_ide_op("通关深渊最终调律者", "611896")
 
-        self.dnf_luodiye_ide_op("补打卡-记录跳转", "582080")
-        self.dnf_luodiye_ide_op("补打卡-领取关注DNF官方微信号", "582081")
-        # self.dnf_luodiye_ide_op("补打卡-补签-浏览DNF助手文章", "582079")
+        self.dnf_luodiye_ide_op("补打卡-记录跳转", "611900")
+        # self.dnf_luodiye_ide_op("补打卡-领取关注DNF官方微信号", "582081")
+        # self.dnf_luodiye_ide_op("补打卡-补签-浏览DNF助手文章", "611899")
 
         # _, iLoginTotal, _ = query_info()
         # logger.info(f"打卡后游戏登录天数为 {iLoginTotal}")
@@ -6683,7 +6683,7 @@ class DjcHelper:
         iLotteryCount, _, _ = query_info()
         logger.info(f"剩余抽奖次数 {iLotteryCount}")
         for idx in range_from_one(iLotteryCount):
-            self.dnf_luodiye_ide_op(f"{idx}/{iLotteryCount} 抽奖", "582075")
+            self.dnf_luodiye_ide_op(f"{idx}/{iLotteryCount} 抽奖", "611897")
             time.sleep(3)
 
         login_gifts_list = [
@@ -6701,7 +6701,7 @@ class DjcHelper:
         for gift_index, require_lottery_count in login_gifts_list:
             if jFinishedLotteryCount >= require_lottery_count:
                 self.dnf_luodiye_ide_op(
-                    f"[{gift_index}] 累积抽奖次数奖励 {require_lottery_count}次", "582076", index=gift_index
+                    f"[{gift_index}] 累积抽奖次数奖励 {require_lottery_count}次", "611898", index=gift_index
                 )
                 time.sleep(3)
             else:
@@ -7665,18 +7665,16 @@ class DjcHelper:
 
         # self.dnf_wegame_ide_op("抽取礼包助力基金", "528842")
 
-        self.dnf_wegame_ide_op("全民礼包", "556084")
-        self.dnf_wegame_ide_op("回流礼包", "556085")
+        self.dnf_wegame_ide_op("见面礼包", "612122")
 
-        self.dnf_wegame_ide_op("每日通关深渊抽奖", "556442")
+        self.dnf_wegame_ide_op("幸运抽奖", "612123")
 
-        self.dnf_wegame_ide_op("获取积分-每日通关深渊", "556443")
-        self.dnf_wegame_ide_op("获取积分-每周末世录团本", "556448")
-        self.dnf_wegame_ide_op("获取积分-创建新职业【破浪者】", "556449")
-        self.dnf_wegame_ide_op("获取积分-创建新职业【蓝拳使者女】", "556450")
+        self.dnf_wegame_ide_op("获取积分-每日通关深渊", "612124")
+        self.dnf_wegame_ide_op("获取积分-每周通关末世录", "612127")
+        self.dnf_wegame_ide_op("获取积分-每周通关米歇尔", "612129")
 
         # self.dnf_wegame_ide_op("积分抽奖礼包", "556451")
-        self.dnf_wegame_ide_op("积分兑换礼包 - 尝试领取 红10券-43积分", "556497", index=1)
+        self.dnf_wegame_ide_op("积分兑换礼包 - 尝试领取 红10券-30积分", "612153", index=6)
 
         act_config = get_not_ams_act("WeGame活动")
         if will_act_expired_in(act_config.dtEndTime, datetime.timedelta(days=5)):
@@ -7686,7 +7684,7 @@ class DjcHelper:
                     "\n"
                     f"结束日期为 {act_config.dtEndTime}"
                 ),
-                "WeGame活动积分兑换提示-26.6",
+                "WeGame活动积分兑换提示-26.9",
                 show_once_daily=True,
                 open_url=get_act_url("WeGame活动"),
             )
@@ -8460,28 +8458,23 @@ class DjcHelper:
 
             return remain
 
-        self.dnf_xinyue_wpe_op("周年庆狂欢礼", 458285)
+        self.dnf_xinyue_wpe_op("全民福利礼包", 505087)
+        # self.dnf_xinyue_wpe_op("心悦福利小助手专属礼包", 505088)
 
-        self.dnf_xinyue_wpe_op("今日登录游戏", 458288)
-        self.dnf_xinyue_wpe_op("今日在线30分钟", 458752)
-        self.dnf_xinyue_wpe_op("今日邀请3位回归玩家", 458899)
-        self.dnf_xinyue_wpe_op("每充值50元", 458737)
-        self.dnf_xinyue_wpe_op("今日消耗156疲劳", 458764)
-        # self.dnf_xinyue_wpe_op("添加心悦福利小助手", YYYYYY)
+        self.dnf_xinyue_wpe_op("今日登录游戏", 505092)
+        # self.dnf_xinyue_wpe_op("添加心悦福利小助手", 505844)
+        self.dnf_xinyue_wpe_op("今日在线30分钟", 505094)
+        self.dnf_xinyue_wpe_op("今日消耗156疲劳", 505095)
+        # self.dnf_xinyue_wpe_op("今日邀请3位玩家", 505098)
+        self.dnf_xinyue_wpe_op("每充值50元", 505093)
 
         for idx in range_from_one(3):
-            self.dnf_xinyue_wpe_op(f"{idx}/3 幸运币抽奖", 458286)
+            self.dnf_xinyue_wpe_op(f"{idx}/3 心悦专属大礼盒 抽奖", 505100)
             time.sleep(3)
 
-        self.dnf_xinyue_wpe_op("破浪者竞速-报名", 458964)
-        self.dnf_xinyue_wpe_op("破浪者竞速-更新积分", 458301)
-        if now_in_range("2026-07-09 08:00:00", "2026-07-15 23:59:59"):
-            self.dnf_xinyue_wpe_op("破浪者竞速-领取奖励", 458297)
 
-        self.dnf_xinyue_wpe_op("女蓝拳竞速-报名", 459298)
-        self.dnf_xinyue_wpe_op("女蓝拳竞速-更新积分", 459300)
-        if now_in_range("2026-07-09 08:00:00", "2026-07-15 23:59:59"):
-            self.dnf_xinyue_wpe_op("女蓝拳竞速-领取奖励", 459301)
+        self.dnf_xinyue_wpe_op("抽取幸运勇士徽章", 505096)
+        self.dnf_xinyue_wpe_op("领取幸运勇士礼", 505089)
 
         # box_count = query_lottery_ticket()
         # logger.info(f"当前拥有 {box_count} 个宝箱")
@@ -8547,7 +8540,7 @@ class DjcHelper:
         # 该类型每个请求之间需要间隔一定时长，否则会请求失败
         time.sleep(3)
 
-        act_id = "28658"
+        act_id = "30352"
         if replace_act_id is not None:
             act_id = replace_act_id
 
@@ -11852,6 +11845,6 @@ if __name__ == "__main__":
         djcHelper.get_bind_role_list()
 
         # djcHelper.dnf_kol()
-        djcHelper.dnf_helper_limit_act_3()
+        djcHelper.dnf_xinyue_wpe()
 
     pause()
